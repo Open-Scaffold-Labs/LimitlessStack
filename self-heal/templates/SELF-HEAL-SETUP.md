@@ -27,7 +27,9 @@ This document describes how to configure the self-healing pipeline for this appl
 
 ## Database Migration
 
-Add the bug-report table to your application schema. Replace `PREFIX_` with your app's table prefix:
+Add the bug-report table to your application schema. Replace `PREFIX_` with your app's table prefix.
+
+> **Note:** The schema below uses UUID types for Supabase (`auth.users` uses UUIDs). If your app also needs to run locally with INTEGER user IDs (e.g. during development), implement runtime type detection in your `ensureBugReportsTable()` function — query `information_schema.columns` to detect `users.id` type and create matching pk/fk columns. See OpenFirehouse commit `aaef555` for the reference implementation.
 
 ```sql
 CREATE TABLE PREFIX_bug_reports (

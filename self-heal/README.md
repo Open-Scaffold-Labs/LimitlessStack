@@ -73,6 +73,10 @@ Expected steady-state at 20 reports/month: under $10/month per app.
 3. **Phase 3 — Ecosystem rollout** — Standard ships to remaining apps. Expected order: OpenFirehouse, OpenInteriorDesign, ClearSightDental, then long tail.
 4. **Phase 4 — Conditional auto-merge** — After 60+ days of Phase 3 across 3+ apps. Requires: high-confidence diagnostic, clean test run, ≤2 files touched. Off by default.
 
+## Runtime compatibility
+
+The canonical template uses UUID types (Supabase standard). For apps that also run locally with INTEGER user IDs, the `ensureBugReportsTable()` function should detect the column type at runtime by querying `information_schema.columns` and creating matching pk/fk types. OpenFirehouse implements this pattern (commit `aaef555`) — the same server code works against both local Postgres (INTEGER) and Supabase (UUID) without configuration.
+
 ## Future capabilities
 
 - **Test-driven verification** — Agent must pass relevant tests before PR opens
