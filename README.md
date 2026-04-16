@@ -2,7 +2,9 @@
 
 Seven tools, one operating system for running Open Scaffold Labs.
 
-Open Scaffold is building 100 vertical SaaS applications on a shared architecture, serving 36.2 million US small businesses across sectors where purpose-built software doesn't exist yet. The Limitless Stack is the AI-powered infrastructure that makes this operationally viable — it's how a small team builds, maintains, and scales across every vertical.
+Vertical SaaS has a scaling problem: every new market means new code, new bugs, new maintenance — and eventually more engineers than the business can support. The Limitless Stack is designed to break that constraint. It's an AI-powered operating protocol that lets a small team build, diagnose, and maintain applications across verticals without scaling headcount linearly. Self-healing pipelines handle bug repair autonomously. A shared knowledge base compounds every fix and architectural decision across the entire portfolio. Semantic memory surfaces patterns that no single engineer would catch.
+
+The market opportunity is real — 36.2 million US small businesses across sectors where purpose-built software barely exists. The Limitless Stack is how Open Scaffold intends to reach them.
 
 | Tool | Role |
 |---|---|
@@ -13,7 +15,6 @@ Open Scaffold is building 100 vertical SaaS applications on a shared architectur
 | **Pinecone** | Semantic memory — full-text recall across all repos |
 | **Antigravity** | Multi-model agentic IDE — parallel agents across verticals |
 | **Paperclip** | Coordination — org chart, budgets, tickets, approvals |
-
 ## Install
 
 **Option A: Claude Code Plugin (recommended)**
@@ -42,7 +43,6 @@ cp -r LimitlessStack/skill/. ~/.claude/skills/limitless-stack/
 - **`antigravity/`** — Integration spec for multi-model agent orchestration.
 - **`paperclip/`** — Integration spec for organizational coordination.
 - **`docs/setup-guide.md`** — Full setup walkthrough.
-
 ## The self-healing pipeline
 
 Every Open Scaffold app ships with autonomous bug diagnosis and repair. Users report bugs in-app; a Claude agent pipeline diagnoses the issue and produces a verified PR — at ~$0.13 per attempt. The `self-heal/` directory contains the canonical templates for shipping this to any app:
