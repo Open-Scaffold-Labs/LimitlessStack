@@ -1,0 +1,31 @@
+{
+  "name": "limitless-stack",
+  "id": "limitless-stack",
+  "owner": {
+    "name": "Open-Scaffold-Labs"
+  },
+  "metadata": {
+    "description": "The operating protocol for the Limitless Stack — seven integrated tools for building and maintaining 100 vertical SaaS applications with autonomous self-healing",
+    "version": "0.2.0"
+  },
+  "plugins": [
+    {
+      "name": "limitless-stack",
+      "source": "./",
+      "description": "Teaches any agent the full Limitless Stack protocol: four-tool lookup, self-healing pipeline, cross-app pattern detection, wiki maintenance, and how all seven tools connect",
+      "version": "0.2.0",
+      "author": {
+        "name": "Open Scaffold Labs"
+      },
+      "keywords": [
+        "limitless-stack",
+        "openscaffold",
+        "protocol",
+        "wiki",
+        "pinecone",
+        "notebooklm"
+      ],
+      "category": "workflow"
+    }
+  ]
+}

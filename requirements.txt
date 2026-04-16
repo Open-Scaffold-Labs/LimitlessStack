@@ -1,0 +1,4 @@
+pinecone
+python-docx
+pdfplumber
+notebooklm-py[browser]
