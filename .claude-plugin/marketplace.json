@@ -5,7 +5,7 @@
     "name": "Open-Scaffold-Labs"
   },
   "metadata": {
-    "description": "The operating protocol for the Limitless Stack — seven integrated tools for building and maintaining 100 vertical SaaS applications with autonomous self-healing",
+    "description": "The operating protocol for the Limitless Stack — seven integrated tools designed to scale across 100+ vertical SaaS applications with autonomous self-healing",
     "version": "0.2.0"
   },
   "plugins": [

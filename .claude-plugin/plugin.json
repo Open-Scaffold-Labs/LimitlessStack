@@ -1,6 +1,6 @@
 {
   "name": "limitless-stack",
-  "description": "The operating protocol for the Limitless Stack — seven integrated tools (Claude, CLAUDE.md, Obsidian, NotebookLM, Pinecone, Antigravity, Paperclip) that form one AI-powered system for building and maintaining 100 vertical SaaS applications. Teaches agents the four-tool lookup order, the self-healing pipeline, cross-app pattern detection, and wiki maintenance.",
+  "description": "The operating protocol for the Limitless Stack — seven integrated tools (Claude, CLAUDE.md, Obsidian, NotebookLM, Pinecone, Antigravity, Paperclip) that form one AI-powered system designed to scale across 100+ vertical SaaS applications. Teaches agents the four-tool lookup order, the self-healing pipeline, cross-app pattern detection, and wiki maintenance.",
   "version": "0.2.0",
   "author": {
     "name": "Open Scaffold Labs"
