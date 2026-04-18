@@ -62,10 +62,13 @@ echo "[3/8] Installing skills to ~/.claude/skills/..."
 SKILLS_DIR="$HOME/.claude/skills"
 mkdir -p "$SKILLS_DIR/limitless-stack"
 mkdir -p "$SKILLS_DIR/notebooklm"
+mkdir -p "$SKILLS_DIR/four-tool-lookup"
 cp "$SCRIPT_DIR/skills/limitless-stack/SKILL.md" "$SKILLS_DIR/limitless-stack/SKILL.md"
 cp "$SCRIPT_DIR/skills/notebooklm/SKILL.md" "$SKILLS_DIR/notebooklm/SKILL.md"
+cp "$SCRIPT_DIR/skills/four-tool-lookup/SKILL.md" "$SKILLS_DIR/four-tool-lookup/SKILL.md"
 echo "  ✓ limitless-stack skill installed (7-tool protocol, self-healing pipeline)"
 echo "  ✓ notebooklm skill installed (full NotebookLM API — 565 lines)"
+echo "  ✓ four-tool-lookup skill installed (wiki → Pinecone → NotebookLM lookup discipline)"
 
 # --- 4. Vault template ---
 if [ ! -d "$TARGET/wiki" ]; then
