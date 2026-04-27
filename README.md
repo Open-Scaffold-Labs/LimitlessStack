@@ -2,6 +2,8 @@
 
 Seven tools, one operating system for running Open Scaffold Labs.
 
+> **New here?** Read **[`Limitless-Stack-Onboarding.pdf`](Limitless-Stack-Onboarding.pdf)** — single self-contained doc walking you from clone to running stack. Designed to be pasted into your Claude session as the onboarding context.
+
 Vertical SaaS has a scaling problem: every new market means new code, new bugs, new maintenance — and eventually more engineers than the business can support. The Limitless Stack is designed to break that constraint. It's an AI-powered operating protocol that lets a small team build, diagnose, and maintain applications across verticals without scaling headcount linearly. Self-healing pipelines handle bug repair autonomously. A shared knowledge base compounds every fix and architectural decision across the entire portfolio. Semantic memory surfaces patterns that no single engineer would catch.
 
 The market opportunity is real — 36.2 million US small businesses across sectors where purpose-built software barely exists. The Limitless Stack is how Open Scaffold intends to reach them.
