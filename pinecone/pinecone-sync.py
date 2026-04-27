@@ -1,16 +1,23 @@
 #!/usr/bin/env python3.11
 """
-Sync the OpenScaffold raw/ corpus into the Pinecone `openscaffold` index.
+Sync the OpenScaffold corpus into the Pinecone `openscaffold` index.
+
+Three corpora, each in its own namespace:
+    repos     namespace=repos    (raw/openscaffold-repos/<repo>/**)      — source code + docs
+    wiki      namespace=wiki     (wiki/**/*.md + CLAUDE.md + README.md)  — curated knowledge base
+    uploads   namespace=uploads  (raw/uploads/**)                        — Matt's attachments
 
 Usage:
-    python3.11 tools/pinecone-sync.py                  # full sync (slow first time)
-    python3.11 tools/pinecone-sync.py --changed-only   # only files modified since last sync (fast)
-    python3.11 tools/pinecone-sync.py --dry-run        # list what would be sent
-    python3.11 tools/pinecone-sync.py --repo FireHazmat # sync one repo only
+    python3.11 tools/pinecone-sync.py                       # full sync of all corpora
+    python3.11 tools/pinecone-sync.py --changed-only        # only files modified since last sync
+    python3.11 tools/pinecone-sync.py --corpus wiki         # one corpus only
+    python3.11 tools/pinecone-sync.py --corpus repos --repo FireHazmat
+    python3.11 tools/pinecone-sync.py --dry-run             # list what would be sent
 
 Reads the Pinecone API key from macOS Keychain entry (service=pinecone-api-key).
 Embeds via Pinecone-hosted multilingual-e5-large.
-State file: <vault>/tools/.pinecone-sync-state.json — tracks last-synced mtime per file.
+State file: <vault>/tools/.pinecone-sync-state.json — tracks last-synced mtime per file, keyed by `<corpus>:<rel_path>`.
+Legacy `<repo>/<path>` keys (pre-2026-04-17) continue to work; the sync will migrate them to `repos:<repo>/<path>` on next write.
 """
 import argparse
 import hashlib
@@ -25,9 +32,16 @@ from pathlib import Path
 # --- config ---
 VAULT = Path(__file__).resolve().parent.parent
 RAW_REPOS = VAULT / "raw" / "openscaffold-repos"
+RAW_UPLOADS = VAULT / "raw" / "uploads"
+WIKI_DIR = VAULT / "wiki"
 STATE_FILE = Path(__file__).resolve().parent / ".pinecone-sync-state.json"
 INDEX_NAME = "openscaffold"
-NAMESPACE = "repos"
+
+# Namespaces — one per corpus.
+NS_REPOS = "repos"
+NS_WIKI = "wiki"
+NS_UPLOADS = "uploads"
+
 CHUNK_CHARS = 1500
 CHUNK_OVERLAP = 200
 BATCH_SIZE = 96  # Pinecone upsert max
@@ -95,8 +109,12 @@ def chunk_text(text: str, size: int = CHUNK_CHARS, overlap: int = CHUNK_OVERLAP)
         i += size - overlap
 
 
-def iter_files(root: Path, repo_filter: str | None):
-    for repo_dir in sorted(root.iterdir()):
+# ---------- corpus iterators ----------
+# Each yields (rel_path_for_state_key, metadata_dict, path_object)
+# rel_path is the identity key (stable across runs); metadata carries corpus-specific tags.
+
+def iter_repo_files(repo_filter: str | None):
+    for repo_dir in sorted(RAW_REPOS.iterdir()):
         if not repo_dir.is_dir():
             continue
         if repo_filter and repo_dir.name != repo_filter:
@@ -106,20 +124,76 @@ def iter_files(root: Path, repo_filter: str | None):
                 continue
             if any(part in SKIP_DIRS for part in path.parts):
                 continue
-            yield repo_dir.name, path
+            rel = path.relative_to(RAW_REPOS / repo_dir.name).as_posix()
+            yield (
+                f"{repo_dir.name}/{rel}",
+                {"repo": repo_dir.name, "path": rel, "ext": path.suffix.lower()},
+                path,
+            )
 
 
-def make_record(repo: str, path: Path, chunk_idx: int, chunk: str) -> dict:
-    rel = path.relative_to(RAW_REPOS / repo).as_posix()
-    rec_id = hashlib.sha1(f"{repo}|{rel}|{chunk_idx}".encode()).hexdigest()
-    return {
+def iter_wiki_files():
+    # Wiki pages under wiki/** plus the vault's CLAUDE.md and README.md which are first-class context.
+    extras = [VAULT / "CLAUDE.md", VAULT / "README.md"]
+    for extra in extras:
+        if extra.exists() and extra.is_file():
+            yield (
+                f"_root/{extra.name}",
+                {"scope": "root", "path": extra.name, "ext": extra.suffix.lower()},
+                extra,
+            )
+    for path in WIKI_DIR.rglob("*.md"):
+        if not path.is_file():
+            continue
+        if any(part in SKIP_DIRS for part in path.parts):
+            continue
+        rel = path.relative_to(WIKI_DIR).as_posix()
+        # Bucket for filtering (entities/apps/concepts/synthesis/sources/…)
+        bucket = rel.split("/", 1)[0] if "/" in rel else "root"
+        yield (
+            rel,
+            {"scope": "wiki", "bucket": bucket, "path": rel, "ext": ".md"},
+            path,
+        )
+
+
+def iter_upload_files():
+    if not RAW_UPLOADS.exists():
+        return
+    for path in RAW_UPLOADS.rglob("*"):
+        if not path.is_file():
+            continue
+        if any(part in SKIP_DIRS for part in path.parts):
+            continue
+        rel = path.relative_to(RAW_UPLOADS).as_posix()
+        yield (
+            rel,
+            {"scope": "uploads", "path": rel, "ext": path.suffix.lower()},
+            path,
+        )
+
+
+def iter_corpus(name: str, repo_filter: str | None):
+    if name == "repos":
+        yield from iter_repo_files(repo_filter)
+    elif name == "wiki":
+        yield from iter_wiki_files()
+    elif name == "uploads":
+        yield from iter_upload_files()
+    else:
+        raise ValueError(f"unknown corpus: {name}")
+
+
+def make_record(corpus: str, rel_id: str, chunk_idx: int, chunk: str, meta: dict) -> dict:
+    rec_id = hashlib.sha1(f"{corpus}|{rel_id}|{chunk_idx}".encode()).hexdigest()
+    rec = {
         "_id": rec_id,
         "chunk_text": chunk,
-        "repo": repo,
-        "path": rel,
-        "ext": path.suffix.lower(),
+        "corpus": corpus,
         "chunk_index": chunk_idx,
     }
+    rec.update(meta)
+    return rec
 
 
 def upsert_with_rate_limit(index, namespace, batch, token_window: deque, dry_run: bool):
@@ -166,9 +240,18 @@ def upsert_with_rate_limit(index, namespace, batch, token_window: deque, dry_run
 def load_state() -> dict:
     if STATE_FILE.exists():
         try:
-            return json.loads(STATE_FILE.read_text())
+            raw = json.loads(STATE_FILE.read_text())
         except Exception:
             return {}
+        # Legacy migration: keys without a `<corpus>:` prefix are from the old repo-only
+        # format (`<repo>/<path>`); move them under the `repos:` prefix so they keep working.
+        migrated = {}
+        for k, v in raw.items():
+            if ":" in k and k.split(":", 1)[0] in {"repos", "wiki", "uploads"}:
+                migrated[k] = v
+            else:
+                migrated[f"repos:{k}"] = v
+        return migrated
     return {}
 
 
@@ -176,10 +259,51 @@ def save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
+def sync_corpus(name: str, namespace: str, index, state: dict, new_state: dict,
+                repo_filter: str | None, args, token_window: deque) -> tuple[int, int, int, int]:
+    """Sync one corpus. Returns (files, chunks, skipped, unchanged)."""
+    batch = []
+    files = 0
+    chunks_total = 0
+    skipped = 0
+    unchanged = 0
+
+    for rel_id, meta, path in iter_corpus(name, repo_filter):
+        state_key = f"{name}:{rel_id}"
+        mtime = path.stat().st_mtime
+        if args.changed_only and state.get(state_key) == mtime:
+            unchanged += 1
+            continue
+
+        text = read_file_text(path)
+        if text is None or not text.strip():
+            skipped += 1
+            continue
+        files += 1
+        for i, chunk in enumerate(chunk_text(text)):
+            batch.append(make_record(name, rel_id, i, chunk, meta))
+            chunks_total += 1
+            if len(batch) >= BATCH_SIZE:
+                upsert_with_rate_limit(index, namespace, batch, token_window, args.dry_run)
+                action = "would upsert" if args.dry_run else "upserted"
+                print(f"  [{name}] {action} batch ({len(batch)})  total chunks: {chunks_total}  files: {files}")
+                batch = []
+        new_state[state_key] = mtime
+
+    if batch:
+        upsert_with_rate_limit(index, namespace, batch, token_window, args.dry_run)
+        action = "would upsert" if args.dry_run else "upserted"
+        print(f"  [{name}] {action} final batch ({len(batch)})")
+
+    return files, chunks_total, skipped, unchanged
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--repo", help="only sync this repo")
+    parser.add_argument("--corpus", choices=["all", "repos", "wiki", "uploads"], default="all",
+                        help="which corpus to sync (default: all)")
+    parser.add_argument("--repo", help="only sync this repo (only relevant for --corpus repos)")
     parser.add_argument("--changed-only", action="store_true",
                         help="only sync files modified since last successful sync")
     parser.add_argument("--reset-state", action="store_true",
@@ -194,13 +318,15 @@ def main():
         print(f"state cleared: {STATE_FILE}")
         return
 
+    corpora_to_run = ["repos", "wiki", "uploads"] if args.corpus == "all" else [args.corpus]
+
     if args.seed_state:
         seeded = {}
-        for repo, path in iter_files(RAW_REPOS, args.repo):
-            rel_key = f"{repo}/{path.relative_to(RAW_REPOS / repo).as_posix()}"
-            seeded[rel_key] = path.stat().st_mtime
+        for name in corpora_to_run:
+            for rel_id, _meta, path in iter_corpus(name, args.repo if name == "repos" else None):
+                seeded[f"{name}:{rel_id}"] = path.stat().st_mtime
         save_state(seeded)
-        print(f"seeded state with {len(seeded)} files: {STATE_FILE}")
+        print(f"seeded state with {len(seeded)} entries across {corpora_to_run}: {STATE_FILE}")
         return
 
     from pinecone import Pinecone
@@ -210,44 +336,31 @@ def main():
     state = load_state() if args.changed_only else {}
     new_state = dict(state)
 
-    batch = []
-    files = 0
-    chunks_total = 0
-    skipped = 0
-    unchanged = 0
+    ns_for = {"repos": NS_REPOS, "wiki": NS_WIKI, "uploads": NS_UPLOADS}
     token_window: deque = deque()
 
-    for repo, path in iter_files(RAW_REPOS, args.repo):
-        rel_key = f"{repo}/{path.relative_to(RAW_REPOS / repo).as_posix()}"
-        mtime = path.stat().st_mtime
-        if args.changed_only and state.get(rel_key) == mtime:
-            unchanged += 1
-            continue
+    totals = {"files": 0, "chunks": 0, "skipped": 0, "unchanged": 0}
+    per_corpus: dict[str, dict] = {}
 
-        text = read_file_text(path)
-        if text is None or not text.strip():
-            skipped += 1
-            continue
-        files += 1
-        for i, chunk in enumerate(chunk_text(text)):
-            batch.append(make_record(repo, path, i, chunk))
-            chunks_total += 1
-            if len(batch) >= BATCH_SIZE:
-                upsert_with_rate_limit(index, NAMESPACE, batch, token_window, args.dry_run)
-                action = "would upsert" if args.dry_run else "upserted"
-                print(f"  {action} batch ({len(batch)})  total chunks: {chunks_total}  files: {files}")
-                batch = []
-        new_state[rel_key] = mtime
-
-    if batch:
-        upsert_with_rate_limit(index, NAMESPACE, batch, token_window, args.dry_run)
-        action = "would upsert" if args.dry_run else "upserted"
-        print(f"  {action} final batch ({len(batch)})")
+    for name in corpora_to_run:
+        print(f"\n=== corpus: {name} (namespace={ns_for[name]}) ===")
+        repo_filter = args.repo if name == "repos" else None
+        files, chunks_total, skipped, unchanged = sync_corpus(
+            name, ns_for[name], index, state, new_state, repo_filter, args, token_window
+        )
+        per_corpus[name] = {"files": files, "chunks": chunks_total, "skipped": skipped, "unchanged": unchanged}
+        totals["files"] += files
+        totals["chunks"] += chunks_total
+        totals["skipped"] += skipped
+        totals["unchanged"] += unchanged
 
     if not args.dry_run:
         save_state(new_state)
 
-    print(f"\nDONE  files: {files}  chunks: {chunks_total}  skipped: {skipped}  unchanged: {unchanged}  dry_run: {args.dry_run}")
+    print("\n=== summary ===")
+    for name, c in per_corpus.items():
+        print(f"  {name:9s} files: {c['files']:5d}  chunks: {c['chunks']:6d}  skipped: {c['skipped']:4d}  unchanged: {c['unchanged']:5d}")
+    print(f"  TOTAL     files: {totals['files']:5d}  chunks: {totals['chunks']:6d}  skipped: {totals['skipped']:4d}  unchanged: {totals['unchanged']:5d}  dry_run: {args.dry_run}")
 
 
 if __name__ == "__main__":

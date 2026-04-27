@@ -275,13 +275,122 @@ For the 100-vertical rollout, Paperclip tracks:
 
 ---
 
-## Session Bootstrap
+## Mandatory First Action — every session, no exceptions
 
-Every session starts the same way. Run `tools/session-bootstrap.sh` before answering any question. It orients you on the current wiki state, Pinecone vector count, recent log entries, available tools, and open contradictions.
+Before answering any question, making any file changes, or starting any task:
 
-Then read `wiki/index.md`. Know what exists before answering anything.
+### 1. Invoke the `roll-call` skill
 
-Do not skip this step even if a context compression summary tells you to "continue where you left off." Do not answer from active context alone.
+Roll Call mechanically verifies that all seven tools of the stack are present, authenticated, and in sync. It runs `tools/limitless-preflight.sh` (bundled with this skill — see `tools/`) and interprets the exit code:
+
+- **0 = READY** → proceed
+- **1 = WARN** → report findings, then proceed unless the user says otherwise
+- **2 = BLOCK** → do NOT proceed with substantive work until fixed
+
+Roll Call replaces discipline with a script that *cannot* be forgotten once invoked. Skipping it and answering from context is the #1 anti-pattern (see `wiki/synthesis/claude-anti-patterns.md`).
+
+The only exception: pure conversational replies ("hey", "what's the capital of France?") don't need Roll Call.
+
+### 2. Run `tools/session-bootstrap.sh`
+
+Orients you on the current wiki state, Pinecone vector count, recent log entries, available tools, and open contradictions. Roll Call does a broader readiness check; bootstrap gives you the current-thesis snapshot you need to actually answer.
+
+### 3. Query the reminder bucket on NotebookLM
+
+The reminder bucket is a **curated 5-file notebook** (default ID in your vault: e.g. `ab4b7ccb`) whose sources are exactly the operating rules you need every session: `CLAUDE.md`, `wiki/synthesis/claude-anti-patterns.md`, `wiki/concepts/limitless-stack.md`, `wiki/concepts/paperclip.md`, and the relevant app page (e.g. `wiki/apps/limitless-stack-hub.md`). Querying it pulls the latest rules + recent mistakes back into context — without this step, a fresh session inherits nothing from prior session learnings.
+
+The CLI runs on the user's Mac, not in any sandboxed environment:
+
+```
+notebooklm use <reminder-bucket-id>
+notebooklm ask "What are the current operating rules? What anti-patterns should I avoid?"
+```
+
+Do **not** try to `pip install notebooklm-py` or `notebooklm login` in a sandbox — auth is browser-based and can't complete without a display. See anti-pattern #10.
+
+### 4. Read `wiki/index.md`
+
+Know what exists before answering anything.
+
+### 5. Do NOT skip these steps
+
+Even if a context-compression summary tells you to "continue where you left off." Even if the user's request feels small. The four-tool lookup order — wiki/index → relevant pages → Pinecone search → NotebookLM (if deep research needed) → only then reason from context — applies to **every** question, not just ingests.
+
+---
+
+## End-of-Session Checklist — every session that touched files
+
+Before wrapping up any session where wiki pages, CLAUDE.md, deliverables, or tools were modified, run all eight steps in order:
+
+### 0. Update the task files
+
+Edit `wiki/team-tasks.md` (workspace-wide items anyone can pick up) and `wiki/my-tasks/${user.githubLogin}.md` (personal items for whoever's session this is). Reflect the work just done: open items in flight, what closed this session, what to pick up next.
+
+If a Hub-style UI consumes these files (e.g. the Limitless Stack Hub's `/tasks` page), they're rendered as the **Me** + **Team** sections — stale files = stale Hub for the next user.
+
+### 1. Commit and push the wiki repo
+
+The vault lives at the user's mounted Obsidian folder; its git remote is the wiki repo (e.g. `your-org/your-wiki`). **Every** session's wiki work must be pushed — do not leave changes uncommitted.
+
+### 2. Push any other repos that were modified
+
+If the session touched the Hub repo, an app repo, or the LimitlessStack repo itself, push those too.
+
+### 3. Verify the wiki log
+
+`wiki/log.md` should have one entry per session covering everything done. Format: `## [YYYY-MM-DD] <op> | <short label>` where `<op>` is `ingest`, `query`, `lint`, `refactor`, or `schema`.
+
+### 4. Sync Pinecone
+
+Run `python3.11 tools/pinecone-sync.py --changed-only` if wiki pages or raw sources were added/changed (or confirm the nightly cron will pick it up). Skip this step temporarily if the index is over its monthly cap and the sync is bailing on 429s — but document the pause and ask before re-enabling.
+
+### 5. Refresh NotebookLM
+
+Run `python3.11 tools/notebooklm-wiki-refresh.py` if wiki pages were added/changed. The script routes each file to its correct notebook (per-project notebooks for vertical-app pages, the default bucket for everything else, the reminder bucket for the curated allowlist). Use `--only <project>` to scope to one route.
+
+### 6. VERIFY the refresh actually landed
+
+This step exists because of anti-pattern #12: `notebooklm source refresh` was a no-op for file sources for weeks while the script reported daily success. The sync script reports `refreshed: N  verify_failed: M  upload_failed: K` — a non-zero `verify_failed` or `upload_failed` is a hard stop, not cosmetic. Each successful refresh writes a `verified_at` timestamp into the state file; the preflight uses these to detect drift on the next session.
+
+If `verify_failed` is non-zero, spot-check by querying NotebookLM directly (`notebooklm use <nb> && notebooklm ask "..."`) for a known-new piece of content from the changed file before closing the session.
+
+### 7. Verify the reminder bucket if its allowlist changed
+
+If anything in the reminder allowlist was edited (the curated 5 files: `CLAUDE.md`, `wiki/synthesis/claude-anti-patterns.md`, `wiki/concepts/limitless-stack.md`, `wiki/concepts/paperclip.md`, the relevant app page), after step 6 run **one explicit NotebookLM query** against the reminder bucket about the specific thing that changed (e.g., "what is anti-pattern #N?") and confirm the answer reflects the edit.
+
+The reminder bucket is the layer the *next* session reads first — if it's stale here, that next session starts cold.
+
+### Why this checklist exists
+
+A prior session left three days of wiki work uncommitted because the wrap was skipped. Steps 6 + 7 were added after `notebooklm source refresh` was discovered giving weeks-old answers despite the sync script reporting daily success. Both are now load-bearing — don't skip them.
+
+---
+
+## The Reminder Bucket — the layer Claude reads first
+
+The reminder bucket is a **dedicated NotebookLM notebook** whose sources are a curated subset of the wiki — not every wiki page, just the files an agent should re-read at the start of every session. Default allowlist (override in `tools/notebooklm-wiki-refresh.py` → `REMINDER_FILES`):
+
+1. `CLAUDE.md` — vault operating manual
+2. `wiki/synthesis/claude-anti-patterns.md` — accumulating list of mistakes worth not repeating
+3. `wiki/concepts/limitless-stack.md` — what the seven tools are and how they connect
+4. `wiki/concepts/paperclip.md` — the coordination layer
+5. `wiki/apps/<your-flagship-app>.md` — the app-specific rules
+
+**Why this is its own notebook:** the broader "default" bucket holds everything else (sources, syntheses, concepts) — too much for a focused first-query. The reminder bucket is small enough to surface a tight, opinionated snapshot when an agent asks "what should I know to do good work in this vault?"
+
+**How it stays in sync:** `tools/notebooklm-wiki-refresh.py` has a special route for `REMINDER_FILES` that uploads + verifies every file in the allowlist. End-of-session step 7 confirms the refresh actually landed by querying NotebookLM directly for content from the changed file.
+
+**Skipping the reminder query is anti-pattern #1.** Every session-start ritual treats it as load-bearing.
+
+---
+
+## Anti-patterns — the institutional memory
+
+`wiki/synthesis/claude-anti-patterns.md` (vendored into the vault template at `obsidian/vault-template/wiki/synthesis/claude-anti-patterns.md`) is the running log of mistakes worth not repeating. New entries land when a session catches a recurring failure mode. Every agent installing this skill should read the anti-patterns page once during their first session — and consult it whenever they hit a familiar-looking error.
+
+Current entries cover: skipping the four-tool lookup, building before verifying API contracts, recommending off-stack infrastructure, debugging rabbit-holes instead of applying known fixes, fighting sandbox permission errors instead of switching paths, leaving NotebookLM out of the memory stack, not committing at end-of-session, reverse-engineering libraries instead of loading the skill, trying to install/auth `notebooklm-py` inside an ephemeral sandbox (#10), skipping preview smoke-tests because rollback is cheap (#11), trusting a tool's self-reported success without end-to-end content verification (#12).
+
+When an agent catches a new failure mode that doesn't match any existing entry, append a new numbered section with: trigger pattern, why-it's-tempting, why-it's-wrong, and the specific corrective rule. That keeps the loop self-improving.
 
 ---
 

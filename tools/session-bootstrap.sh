@@ -44,6 +44,17 @@ echo "── TOOLS AVAILABLE:"
 ls "$VAULT/tools/"*.py "$VAULT/tools/"*.sh 2>/dev/null | while read f; do echo "  • $(basename "$f")"; done
 echo ""
 
+echo "── NOTEBOOKLM ACCESS (READ THIS BEFORE RUNNING notebooklm):"
+echo "  CLI + auth live on Matt's Mac, NOT in this sandbox."
+echo "  Route every call via desktop-commander:"
+echo "    mcp__desktop-commander__start_process("
+echo "      command=\"notebooklm use <id> && notebooklm ask '...'\","
+echo "      shell=\"zsh\", timeout_ms=90000)"
+echo "  DO NOT pip-install notebooklm-py or playwright in the sandbox — no display,"
+echo "  no auth, wiped every session. See wiki/concepts/notebooklm-workflow.md"
+echo "  and anti-pattern #10 in wiki/synthesis/claude-anti-patterns.md."
+echo ""
+
 echo "── OPEN CONTRADICTIONS / WATCHPOINTS:"
 grep -r "warning\|contradiction\|unresolved\|⚠️" "$VAULT/wiki/synthesis/architecture.md" 2>/dev/null | head -5
 echo ""

@@ -1,11 +1,34 @@
 {
   "name": "limitless-stack",
-  "description": "The operating protocol for the Limitless Stack — seven integrated tools (Claude, CLAUDE.md, Obsidian, NotebookLM, Pinecone, Hub Workspace, Paperclip) that form one AI-powered system designed to scale across 100+ vertical SaaS applications. Teaches agents the four-tool lookup order, the self-healing pipeline, cross-app pattern detection, and wiki maintenance.",
+  "description": "The operating protocol for the Limitless Stack \u2014 seven integrated tools (Claude, CLAUDE.md, Obsidian, NotebookLM, Pinecone, Hub Workspace, Paperclip) that form one AI-powered system designed to scale across 100+ vertical SaaS applications. Teaches agents the four-tool lookup order, the self-healing pipeline, cross-app pattern detection, and wiki maintenance.",
   "version": "0.2.0",
   "author": {
     "name": "Open Scaffold Labs"
   },
   "license": "MIT",
-  "keywords": ["limitless-stack", "openscaffold", "vertical-saas", "self-healing", "obsidian", "pinecone", "notebooklm", "hub-workspace", "paperclip", "wiki", "multi-agent"],
-  "skills": ["./skills/limitless-stack", "./skills/notebooklm"]
+  "keywords": [
+    "anti-patterns",
+    "hub-workspace",
+    "limitless-stack",
+    "multi-agent",
+    "notebooklm",
+    "obsidian",
+    "openscaffold",
+    "paperclip",
+    "pinecone",
+    "preflight",
+    "roll-call",
+    "self-healing",
+    "session-bootstrap",
+    "verify-before-claim",
+    "vertical-saas",
+    "wiki"
+  ],
+  "skills": [
+    "./skills/limitless-stack",
+    "./skills/notebooklm",
+    "./skills/four-tool-lookup",
+    "./skills/roll-call",
+    "./skills/verify-before-claim"
+  ]
 }

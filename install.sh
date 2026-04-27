@@ -60,15 +60,14 @@ fi
 # --- 3. Skills ---
 echo "[3/8] Installing skills to ~/.claude/skills/..."
 SKILLS_DIR="$HOME/.claude/skills"
-mkdir -p "$SKILLS_DIR/limitless-stack"
-mkdir -p "$SKILLS_DIR/notebooklm"
-mkdir -p "$SKILLS_DIR/four-tool-lookup"
-cp "$SCRIPT_DIR/skills/limitless-stack/SKILL.md" "$SKILLS_DIR/limitless-stack/SKILL.md"
-cp "$SCRIPT_DIR/skills/notebooklm/SKILL.md" "$SKILLS_DIR/notebooklm/SKILL.md"
-cp "$SCRIPT_DIR/skills/four-tool-lookup/SKILL.md" "$SKILLS_DIR/four-tool-lookup/SKILL.md"
-echo "  ✓ limitless-stack skill installed (7-tool protocol, self-healing pipeline)"
-echo "  ✓ notebooklm skill installed (full NotebookLM API — 565 lines)"
-echo "  ✓ four-tool-lookup skill installed (wiki → Pinecone → NotebookLM lookup discipline)"
+for skill in limitless-stack notebooklm four-tool-lookup roll-call verify-before-claim; do
+  mkdir -p "$SKILLS_DIR/$skill"
+  cp "$SCRIPT_DIR/skills/$skill/SKILL.md" "$SKILLS_DIR/$skill/SKILL.md"
+  echo "  ✓ $skill skill installed"
+done
+echo "  (limitless-stack = 7-tool protocol; notebooklm = full NotebookLM API;"
+echo "   four-tool-lookup = wiki → Pinecone → NotebookLM discipline;"
+echo "   roll-call = session-start preflight; verify-before-claim = guard against false unavailability claims)"
 
 # --- 4. Vault template ---
 if [ ! -d "$TARGET/wiki" ]; then
@@ -83,12 +82,21 @@ fi
 # --- 5. Tool scripts ---
 echo "[5/8] Copying tool scripts..."
 mkdir -p "$TARGET/tools"
+# Pinecone sync + search
 cp "$SCRIPT_DIR/pinecone/pinecone-sync.py" "$TARGET/tools/pinecone-sync.py"
 cp "$SCRIPT_DIR/pinecone/pinecone-search.py" "$TARGET/tools/pinecone-search.py"
-cp "$SCRIPT_DIR/notebooklm/notebooklm-wiki-refresh.py" "$TARGET/tools/notebooklm-wiki-refresh.py"
+# NotebookLM operational tools
+cp "$SCRIPT_DIR/tools/notebooklm-wiki-refresh.py" "$TARGET/tools/notebooklm-wiki-refresh.py"
+cp "$SCRIPT_DIR/tools/notebooklm-dedupe.py" "$TARGET/tools/notebooklm-dedupe.py"
+# Session lifecycle scripts
 cp "$SCRIPT_DIR/tools/session-bootstrap.sh" "$TARGET/tools/session-bootstrap.sh"
-chmod +x "$TARGET/tools/session-bootstrap.sh"
-echo "  ✓ pinecone-sync.py, pinecone-search.py, notebooklm-wiki-refresh.py, session-bootstrap.sh"
+cp "$SCRIPT_DIR/tools/limitless-preflight.sh" "$TARGET/tools/limitless-preflight.sh"
+chmod +x "$TARGET/tools/session-bootstrap.sh" "$TARGET/tools/limitless-preflight.sh" \
+         "$TARGET/tools/notebooklm-wiki-refresh.py" "$TARGET/tools/notebooklm-dedupe.py"
+echo "  ✓ pinecone-sync, pinecone-search, notebooklm-wiki-refresh, notebooklm-dedupe,"
+echo "    session-bootstrap, limitless-preflight (the script Roll Call calls)"
+echo "  Note: edit tools/limitless-preflight.sh + notebooklm-wiki-refresh.py to point at"
+echo "  YOUR vault path and YOUR NotebookLM bucket IDs before first run."
 
 # --- 6. CLAUDE.md ---
 if [ ! -f "$TARGET/CLAUDE.md" ]; then

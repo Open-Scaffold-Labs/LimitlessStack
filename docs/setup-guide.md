@@ -292,6 +292,59 @@ If you're not on Cowork, use `crontab -e`:
 
 ---
 
+## Step 9 — Wire up the reminder bucket and Roll Call
+
+This is what makes the loop self-improving. Without it, every fresh session starts cold; with it, prior session learnings get back into context within the first 30 seconds.
+
+### Create the reminder bucket
+
+A dedicated NotebookLM notebook whose sources are exactly the operating rules an agent should re-read at session start. Default allowlist (5 files):
+
+- `CLAUDE.md`
+- `wiki/synthesis/claude-anti-patterns.md`
+- `wiki/concepts/limitless-stack.md`
+- `wiki/concepts/paperclip.md`
+- `wiki/apps/<your-flagship-app>.md`
+
+In Chrome (signed into NotebookLM), create a notebook named e.g. `<Your Domain> — Reminder` and upload those five files as sources. **Note the notebook ID.**
+
+### Wire the bucket IDs into `tools/notebooklm-wiki-refresh.py`
+
+Open it, find `NOTEBOOK_ROUTES` and `REMINDER_FILES` near the top, and edit the IDs to match yours. The script defaults are Matt Lavin's IDs — change them to your own.
+
+### Set up Roll Call
+
+`tools/limitless-preflight.sh` is the script Roll Call calls. Open it and edit:
+
+- `VAULT_PATH` near the top — point to your vault.
+- The `NOTEBOOK_ROUTES` array at the bottom — match your bucket IDs.
+- The reminder allowlist — match your `REMINDER_FILES`.
+
+Test it:
+
+```bash
+bash tools/limitless-preflight.sh
+echo "exit code: $?"
+```
+
+`0` = READY, `1` = WARN, `2` = BLOCK. The script self-documents what each check does.
+
+### Make the `roll-call` skill discoverable
+
+`install.sh` copied the skill to `~/.claude/skills/roll-call/SKILL.md`. Open a Claude Code or Cowork session and say "roll call" — Claude should auto-invoke the skill, which runs the preflight via `mcp__desktop-commander__start_process`.
+
+### Daily check-ins
+
+- **At session start**: every substantive session begins with Roll Call. The skill description tells the model to invoke it for greetings like "hey claude", "are you ready", "preflight", or whenever a session touches OpenScaffold work.
+- **Mid-session**: when ingesting new sources or refreshing the wiki, run `python3.11 tools/notebooklm-wiki-refresh.py --only reminder` to keep the bucket current as the allowlist files change.
+- **At session end**: run the full 8-step end-of-session checklist documented in `skills/limitless-stack/SKILL.md` (or in your vault's `CLAUDE.md` if you've installed the schema). Step 7 specifically queries the reminder bucket to confirm the latest edits actually landed.
+
+### Vendor the anti-patterns page from day one
+
+`install.sh` copies `obsidian/vault-template/wiki/synthesis/claude-anti-patterns.md` into your new vault's wiki on first install. That gives you a starter list with 11+ entries already on the books. Append your own as you discover failure modes — the skill tells future agents to consult it.
+
+---
+
 ## Daily usage, once it's all live
 
 - **New source lands?** Drop it in `raw/openscaffold-repos/<repo>/<path>` (or `git pull`), then run `python3.11 tools/pinecone-sync.py --changed-only` to update the index. Ask Claude to ingest it into the wiki.

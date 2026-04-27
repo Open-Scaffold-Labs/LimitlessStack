@@ -5,7 +5,7 @@
     "name": "Open-Scaffold-Labs"
   },
   "metadata": {
-    "description": "The operating protocol for the Limitless Stack — seven integrated tools designed to scale across 100+ vertical SaaS applications with autonomous self-healing",
+    "description": "The operating protocol for the Limitless Stack \u2014 seven integrated tools designed to scale across 100+ vertical SaaS applications with autonomous self-healing",
     "version": "0.2.0"
   },
   "plugins": [
@@ -18,12 +18,17 @@
         "name": "Open Scaffold Labs"
       },
       "keywords": [
+        "anti-patterns",
         "limitless-stack",
+        "notebooklm",
         "openscaffold",
-        "protocol",
-        "wiki",
         "pinecone",
-        "notebooklm"
+        "preflight",
+        "protocol",
+        "roll-call",
+        "self-improving",
+        "session-lifecycle",
+        "wiki"
       ],
       "category": "workflow"
     }

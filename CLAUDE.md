@@ -4,8 +4,9 @@ This repo contains the Limitless Stack — the operating protocol for Open Scaff
 
 ## Before any work
 
-1. Run `tools/session-bootstrap.sh` if working in a vault context.
-2. Read `skills/limitless-stack/SKILL.md` — that's the protocol this repo defines. Know it.
+1. Invoke the `roll-call` skill (mechanically verifies all seven tools — see `skills/roll-call/SKILL.md`).
+2. Run `tools/session-bootstrap.sh` if working in a vault context.
+3. Read `skills/limitless-stack/SKILL.md` — that's the protocol this repo defines. Know it. The "Mandatory First Action" + "End-of-Session Checklist" sections in SKILL.md are the canonical session lifecycle.
 
 ## What lives here
 

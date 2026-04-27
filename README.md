@@ -33,11 +33,28 @@ cp -r LimitlessStack/skill/. ~/.claude/skills/limitless-stack/
 
 ## What's in the repo
 
-- **`skills/limitless-stack/SKILL.md`** — The installable protocol. Teaches any agent all seven tools, the four-tool lookup order, the self-healing pipeline, and how everything connects.
-- **`skills/notebooklm/SKILL.md`** — The full NotebookLM API skill (bundled from notebooklm-py). Create notebooks, add sources, generate artifacts, download results.
+### Skills (auto-installed by `install.sh` to `~/.claude/skills/`)
+
+- **`skills/limitless-stack/`** — The installable protocol. Teaches any agent all seven tools, the four-tool lookup order, the **mandatory first action** (Roll Call → bootstrap → reminder query → wiki/index → four-tool lookup), the **end-of-session checklist** (8 steps: task files → commit/push → verify log → Pinecone → NotebookLM refresh → verify refresh landed → verify reminder bucket), the reminder bucket pattern, and the self-healing pipeline.
+- **`skills/notebooklm/`** — The full NotebookLM API skill (bundled from notebooklm-py). Create notebooks, add sources, generate artifacts, download results.
+- **`skills/four-tool-lookup/`** — The wiki → Pinecone → NotebookLM lookup discipline as its own skill, so the order is enforceable on top of the umbrella protocol.
+- **`skills/roll-call/`** — Session-start preflight skill. Mechanically verifies all seven tools are present, authenticated, and in sync before substantive work starts. Returns READY / WARN / BLOCK.
+- **`skills/verify-before-claim/`** — Enforces a verification protocol before declaring any tool, resource, or capability as "unavailable". Born from anti-pattern #12 — `notebooklm source refresh` reporting success while content stayed frozen for weeks.
+
+### Operational tools (`tools/` — copied into your vault by `install.sh`)
+
+- **`limitless-preflight.sh`** — the script Roll Call calls. Validates all seven tools, dedupe-checks every NotebookLM bucket, returns 0/1/2.
+- **`session-bootstrap.sh`** — current-thesis snapshot at session start.
+- **`notebooklm-wiki-refresh.py`** — routes wiki files into per-project + default + reminder NotebookLM buckets, uploads, and **verifies content actually landed**.
+- **`notebooklm-dedupe.py`** — sweep any bucket for duplicate sources (uses cmd_replace correctly; the original wiki-refresh had a ghost-duplicate bug for two weeks before this was added).
+- **`pinecone-sync.py`** — chunks the corpus, upserts into the `openscaffold` index, supports `--changed-only`, `--dry-run`, `--repo NAME`. Rate-limit aware.
+- **`pinecone-search.py`** — semantic search across the index with optional `--repo` filter.
+
+### Docs and templates
+
 - **`claude-md/`** — CLAUDE.md templates for vaults and repos, including self-healing trust anchor configuration.
-- **`obsidian/vault-template/`** — Vault skeleton with wiki structure ready to go.
-- **`pinecone/`** — Sync and search scripts for Pinecone semantic memory.
+- **`obsidian/vault-template/`** — Vault skeleton with wiki structure ready to go. Includes a starter `wiki/synthesis/claude-anti-patterns.md` so new vaults inherit the institutional memory of mistakes worth not repeating.
+- **`pinecone/`** — Reference copies of the sync + search scripts (the canonical source-of-truth lives in `tools/`).
 - **`notebooklm/`** — Wiki refresh tooling for NotebookLM integration.
 - **`self-heal/`** — Self-healing pipeline: canonical file templates (workflow, agent script, setup guide), security model, cost model, rollout plan.
 - **`antigravity/`** — Integration spec for multi-model agent orchestration.
