@@ -1,6 +1,6 @@
 ---
 name: limitless-stack
-description: "The operating protocol for the Limitless Stack — seven integrated tools (Claude, CLAUDE.md, Obsidian, NotebookLM, Pinecone, Antigravity, Paperclip) that form one AI-powered system for running Open Scaffold Labs. The Stack exists to make a 100-vertical SaaS platform operationally viable with a small team: every app shares one architecture, one self-healing pipeline, and one knowledge base that compounds across all of them. Install this skill to teach any agent the full protocol."
+description: "The operating protocol for the Limitless Stack — seven integrated tools (Claude, CLAUDE.md, Obsidian, NotebookLM, Pinecone, Hub Workspace, Paperclip) that form one AI-powered system for running Open Scaffold Labs. The Stack exists to make a 100-vertical SaaS platform operationally viable with a small team: every app shares one architecture, one self-healing pipeline, and one knowledge base that compounds across all of them. Install this skill to teach any agent the full protocol."
 version: 0.2.0
 author: Open Scaffold Labs
 license: MIT
@@ -17,7 +17,7 @@ Seven tools, one operating system. Open Scaffold is building 100 vertical SaaS a
 | **Obsidian** | Structured knowledge base — wiki, graph, interlinked pages |
 | **NotebookLM** | Research desk — deep dives across curated source collections |
 | **Pinecone** | Semantic memory — full-text recall across all repos and docs |
-| **Antigravity** | Multi-model agentic IDE — runs Claude, Gemini, ChatGPT agents in parallel |
+| **Hub Workspace** | Multi-model agent runtime — Gemini default, Claude opt-in, presence-aware in the Hub UI |
 | **Paperclip** | Coordination — org chart, budgets, tickets, routines, approvals |
 
 These are not separate services. They are one integrated system. The entire OpenScaffold platform runs on Supabase + Vercel — the Limitless Stack lives on that same infrastructure.
@@ -26,7 +26,7 @@ These are not separate services. They are one integrated system. The entire Open
 
 ## Why the Stack Exists
 
-Open Scaffold's thesis: millions of small businesses in underserved verticals — landscapers, tattoo artists, auto mechanics, cleaning services — operate with generic tools because no one has built affordable, purpose-built software for them. The shared architecture means every new vertical app inherits the full platform: auth, payments, AI features, and the self-healing pipeline. But 100 apps means 100 codebases, 100 deployment targets, 100 sets of bugs. A traditional engineering org can't maintain that. The Limitless Stack is how you do it — AI agents that are domain-aware for every app (via CLAUDE.md), backed by a knowledge base that compounds (Obsidian + Pinecone), with autonomous diagnostics and repair (the self-healing pipeline), orchestrated across multiple models (Antigravity), and coordinated through a single system (Paperclip).
+Open Scaffold's thesis: millions of small businesses in underserved verticals — landscapers, tattoo artists, auto mechanics, cleaning services — operate with generic tools because no one has built affordable, purpose-built software for them. The shared architecture means every new vertical app inherits the full platform: auth, payments, AI features, and the self-healing pipeline. But 100 apps means 100 codebases, 100 deployment targets, 100 sets of bugs. A traditional engineering org can't maintain that. The Limitless Stack is how you do it — AI agents that are domain-aware for every app (via CLAUDE.md), backed by a knowledge base that compounds (Obsidian + Pinecone), with autonomous diagnostics and repair (the self-healing pipeline), with a multi-model agent runtime (Hub Workspace), and coordinated through a single system (Paperclip).
 
 ---
 
@@ -79,7 +79,7 @@ Each tool in the Limitless Stack has a specific role in the pipeline:
 - **Obsidian** tracks self-heal rollout status per app, records cross-app bug patterns, and surfaces recurring issues through wiki synthesis pages.
 - **Pinecone** enables the cross-application pattern library — aggregate bug diagnoses are indexed so patterns across all 100 apps can be detected and fed back into CLAUDE.md files.
 - **NotebookLM** supports deep research into recurring bug categories, letting operators study patterns across curated diagnostic data.
-- **Antigravity** can dispatch parallel fix candidates for high-severity bugs — multiple agents with varied approaches, producing multiple PRs for comparison.
+- **Hub Workspace** can dispatch parallel fix candidates for high-severity bugs — multiple agents with varied approaches, producing multiple PRs for comparison.
 - **Paperclip** manages the rollout schedule (which apps have self-healing enabled, phase tracking), cost tracking per attempt, and approval workflows for conditional auto-merge policies.
 
 ### The ten-stage pipeline
@@ -244,19 +244,20 @@ Notebook IDs are tracked in `wiki/concepts/notebooklm-workflow.md`. If auth expi
 
 ---
 
-## Antigravity — Multi-Model Agentic IDE
+## Hub Workspace — Multi-Model Agent Runtime
 
-Antigravity is Google's agent-first IDE — a modified VS Code fork that serves as the environment where Limitless Stack agents actually run. It supports multiple AI models (Gemini, Claude, ChatGPT) and can dispatch up to five agents working in parallel on different parts of a project via its Mission Control interface.
+Hub Workspace is the chat surface inside the Limitless Stack Hub (route `/chat` in the Hub UI, sidebar entry "Hub Workspace" under the Personal section). It's where humans and agents converse — **Gemini 2.5 Flash by default** (free for onboarded users) with **Claude as opt-in** for complex multi-file reasoning. Conversations are per-tab and not persisted by design; the wiki, Pinecone, and NotebookLM are the persistent memory layers.
 
-In the Limitless Stack, Antigravity is the orchestration layer for development workflows. It's where you:
+In the Limitless Stack, Hub Workspace is the orchestration layer for collaborative work. It's where you:
 
-- Switch between models mid-session based on task needs (Gemini for general tasks, Claude Opus for complex multi-file reasoning)
-- Run parallel agents that each follow the Limitless Stack protocol
-- Access the vault, repos, and tooling from a single workspace
+- Switch between Gemini and Claude based on task complexity
+- Dispatch agents that follow the Limitless Stack protocol
+- See who else is active — the Hub Workspace tile on `/today` glows when a teammate is mid-conversation
+- Access the vault, repos, and the rest of the seven-tool stack from a single workspace
 
-For self-healing, Antigravity enables the future "multiple fix candidates" capability — dispatching parallel agent runs with varied approaches for high-severity bugs, giving operators multiple PRs to compare.
+For self-healing, Hub Workspace enables the "multiple fix candidates" capability — dispatching parallel agent runs with varied approaches for high-severity bugs, giving operators multiple PRs to compare.
 
-Any agent Antigravity dispatches — regardless of which model powers it — should install this skill to learn the seven-tool protocol.
+Any agent dispatched from Hub Workspace — regardless of which model powers it — should install this skill to learn the seven-tool protocol.
 
 ---
 

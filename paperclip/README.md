@@ -27,5 +27,5 @@ Deployment in progress. This spec will expand as Paperclip comes online.
 - **Obsidian** — Paperclip reads the wiki for context when making coordination decisions. App pages in the wiki reflect Paperclip's rollout status.
 - **Pinecone** — Paperclip searches the corpus to inform ticket routing and prioritization
 - **NotebookLM** — Paperclip queries notebooks for research backing decisions
-- **Antigravity** — Paperclip hands off multi-agent tasks to Antigravity for orchestration
+- **Hub Workspace** — Paperclip hands off multi-agent tasks to Hub Workspace for orchestration
 - **Self-healing** — Paperclip owns rollout scheduling, cost tracking, auto-merge approvals, and rate limiting

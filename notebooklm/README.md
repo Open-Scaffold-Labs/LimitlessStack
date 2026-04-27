@@ -56,6 +56,6 @@ Tracked in `wiki/concepts/notebooklm-workflow.md` inside the Obsidian vault. Whe
 - **Obsidian** — Wiki content can be uploaded as notebook sources; research results get filed back as synthesis pages
 - **CLAUDE.md** — The four-tool lookup order puts NotebookLM at step #3
 - **Pinecone** — Pinecone search surfaces relevant files that can be uploaded to notebooks
-- **Antigravity** — Agents running in Antigravity query notebooks via the CLI
+- **Hub Workspace** — Agents running in Hub Workspace query notebooks via the CLI
 - **Paperclip** — Paperclip queries notebooks for research backing organizational decisions
 - **Self-healing** — Bug pattern research, architecture analysis, vertical market research for rollout prioritization

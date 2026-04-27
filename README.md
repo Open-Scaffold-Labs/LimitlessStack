@@ -13,7 +13,7 @@ The market opportunity is real — 36.2 million US small businesses across secto
 | **Obsidian** | Structured knowledge base — wiki, cross-app patterns, rollout tracking |
 | **NotebookLM** | Research desk — deep dives across curated sources |
 | **Pinecone** | Semantic memory — full-text recall across all repos |
-| **Antigravity** | Multi-model agentic IDE — parallel agents across verticals |
+| **Hub Workspace** | Multi-model agent runtime — Gemini default, Claude opt-in |
 | **Paperclip** | Coordination — org chart, budgets, tickets, approvals |
 ## Install
 

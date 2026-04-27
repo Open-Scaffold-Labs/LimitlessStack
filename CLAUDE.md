@@ -16,7 +16,7 @@ This repo contains the Limitless Stack — the operating protocol for Open Scaff
 - `pinecone/` — Sync and search scripts.
 - `notebooklm/` — Wiki refresh tooling.
 - `self-heal/` — Self-healing pipeline: canonical templates (workflow, agent script, setup guide), security model, rollout plan.
-- `antigravity/` — Integration spec.
+- `hub-workspace/` — Integration spec for the Hub's agent-runtime surface.
 - `paperclip/` — Integration spec.
 - `docs/` — Setup guide and documentation.
 - `.claude-plugin/` — Plugin packaging for Claude Code distribution.

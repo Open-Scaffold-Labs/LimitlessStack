@@ -44,7 +44,7 @@ playwright install chromium
 
 ## Step 1 — Create the vault
 
-Pick a folder path. Matt's is `~/Claude code antigravity/obsidian/` (trailing space intentional). For Dale you might use `~/OpenScaffold-Vault/` (no space — simpler).
+Pick a folder path. Matt's is `~/Claude code hub-workspace/obsidian/` (trailing space intentional). For Dale you might use `~/OpenScaffold-Vault/` (no space — simpler).
 
 ```bash
 VAULT=~/OpenScaffold-Vault

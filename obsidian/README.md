@@ -52,6 +52,6 @@ When setting up a new Limitless Stack instance, copy this template and add the C
 - **CLAUDE.md** — The vault schema defines how the LLM interacts with the wiki. Each app's CLAUDE.md references wiki patterns.
 - **Pinecone** — `raw/` content is indexed in Pinecone for semantic search when the wiki is thin. Cross-app bug patterns from synthesis pages also feed Pinecone.
 - **NotebookLM** — Wiki content can be uploaded as sources to topic notebooks for deep research.
-- **Antigravity** — The vault lives in Antigravity's workspace, accessible to all dispatched agents.
+- **Hub Workspace** — The vault lives in Hub Workspace's workspace, accessible to all dispatched agents.
 - **Paperclip** — Paperclip reads the wiki for context when coordinating rollout and budgets.
 - **Self-healing** — Wiki tracks rollout status per app and feeds the cross-application pattern library back into CLAUDE.md files.

@@ -15,7 +15,7 @@ Open Scaffold is building 100 vertical applications on a shared architecture. Tr
 | **Obsidian** | Tracks rollout status per app, records cross-app bug patterns, surfaces recurring issues as wiki synthesis pages |
 | **Pinecone** | Powers the cross-application pattern library — indexed diagnoses surface patterns across all 100 apps |
 | **NotebookLM** | Deep research into recurring bug categories across curated diagnostic data |
-| **Antigravity** | Dispatches parallel fix candidates for high-severity bugs — multiple agents, multiple PRs for comparison |
+| **Hub Workspace** | Dispatches parallel fix candidates for high-severity bugs — multiple agents, multiple PRs for comparison |
 | **Paperclip** | Manages rollout schedule, per-app cost tracking, approval workflows for auto-merge policies |
 
 ## The pipeline (ten stages)
@@ -80,5 +80,5 @@ The canonical template uses UUID types (Supabase standard). For apps that also r
 ## Future capabilities
 
 - **Test-driven verification** — Agent must pass relevant tests before PR opens
-- **Multiple fix candidates** — Parallel agent runs for high-severity bugs (via Antigravity)
+- **Multiple fix candidates** — Parallel agent runs for high-severity bugs (via Hub Workspace)
 - **Cross-application pattern library** — Aggregate diagnoses indexed in Pinecone, common patterns folded back into CLAUDE.md files (via Obsidian wiki)

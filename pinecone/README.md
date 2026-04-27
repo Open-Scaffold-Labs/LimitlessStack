@@ -71,6 +71,6 @@ A scheduled task runs `pinecone-sync.py --changed-only` at 3:10 AM daily. It pul
 - **Obsidian** — Pinecone indexes `raw/` content; search results get cited in wiki pages and filed as synthesis
 - **CLAUDE.md** — The four-tool lookup order puts Pinecone at step #2. Cross-app patterns from Pinecone feed back into CLAUDE.md files.
 - **NotebookLM** — Pinecone finds relevant files that can then be uploaded to NotebookLM notebooks for deeper analysis
-- **Antigravity** — Agents running in Antigravity call Pinecone search scripts directly
+- **Hub Workspace** — Agents running in Hub Workspace call Pinecone search scripts directly
 - **Paperclip** — Paperclip can query Pinecone to inform ticket routing and prioritization
 - **Self-healing** — Indexed diagnostic outputs power cross-app pattern detection; Pinecone search helps the diagnostic agent find related fixes in other repos
