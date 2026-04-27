@@ -8,7 +8,9 @@
   "license": "MIT",
   "keywords": [
     "anti-patterns",
+    "code-discipline",
     "hub-workspace",
+    "karpathy",
     "limitless-stack",
     "multi-agent",
     "notebooklm",
@@ -20,6 +22,7 @@
     "roll-call",
     "self-healing",
     "session-bootstrap",
+    "surgical-changes",
     "verify-before-claim",
     "vertical-saas",
     "wiki"
@@ -29,6 +32,7 @@
     "./skills/notebooklm",
     "./skills/four-tool-lookup",
     "./skills/roll-call",
-    "./skills/verify-before-claim"
+    "./skills/verify-before-claim",
+    "./skills/karpathy-guidelines"
   ]
 }

@@ -40,6 +40,7 @@ cp -r LimitlessStack/skill/. ~/.claude/skills/limitless-stack/
 - **`skills/four-tool-lookup/`** — The wiki → Pinecone → NotebookLM lookup discipline as its own skill, so the order is enforceable on top of the umbrella protocol.
 - **`skills/roll-call/`** — Session-start preflight skill. Mechanically verifies all seven tools are present, authenticated, and in sync before substantive work starts. Returns READY / WARN / BLOCK.
 - **`skills/verify-before-claim/`** — Enforces a verification protocol before declaring any tool, resource, or capability as "unavailable". Born from anti-pattern #12 — `notebooklm source refresh` reporting success while content stayed frozen for weeks.
+- **`skills/karpathy-guidelines/`** — Behavioral guidelines to reduce common LLM coding mistakes (Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven Execution). Mirror of [forrestchang/andrej-karpathy-skills](https://github.com/forrestchang/andrej-karpathy-skills) (MIT) — vendored so the discipline ships with the protocol.
 
 ### Operational tools (`tools/` — copied into your vault by `install.sh`)
 
@@ -53,7 +54,7 @@ cp -r LimitlessStack/skill/. ~/.claude/skills/limitless-stack/
 ### Docs and templates
 
 - **`claude-md/`** — CLAUDE.md templates for vaults and repos, including self-healing trust anchor configuration.
-- **`obsidian/vault-template/`** — Vault skeleton with wiki structure ready to go. Includes a starter `wiki/synthesis/claude-anti-patterns.md` so new vaults inherit the institutional memory of mistakes worth not repeating.
+- **`obsidian/vault-template/`** — Vault skeleton with wiki structure ready to go. Includes a starter `wiki/synthesis/claude-anti-patterns.md` (institutional memory of mistakes worth not repeating), `wiki/concepts/llm-wiki-pattern.md` (the foundational Karpathy pattern), `wiki/sources/claude-code-karpathy-obsidian-video-2026-04-14.md` (source summary of the video that started this), and `wiki/concepts/notebooklm-workflow.md` (the 7-bucket routing pattern).
 - **`pinecone/`** — Reference copies of the sync + search scripts (the canonical source-of-truth lives in `tools/`).
 - **`notebooklm/`** — Wiki refresh tooling for NotebookLM integration.
 - **`self-heal/`** — Self-healing pipeline: canonical file templates (workflow, agent script, setup guide), security model, cost model, rollout plan.

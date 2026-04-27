@@ -316,6 +316,27 @@ Know what exists before answering anything.
 
 Even if a context-compression summary tells you to "continue where you left off." Even if the user's request feels small. The four-tool lookup order — wiki/index → relevant pages → Pinecone search → NotebookLM (if deep research needed) → only then reason from context — applies to **every** question, not just ingests.
 
+### Foundational reading (first-session orientation)
+
+If this is your first session in this vault, read these three pages once before you start writing — they explain *why* the system is shaped the way it is:
+
+- **`wiki/concepts/llm-wiki-pattern.md`** — Andrej Karpathy's LLM Wiki pattern: human curates sources and asks questions, LLM reads and writes into a persistent interlinked wiki, knowledge compounds across sources.
+- **`wiki/sources/claude-code-karpathy-obsidian-video-2026-04-14.md`** — the source summary distilling the four-tool memory framing (CLAUDE.md / Obsidian / NotebookLM / Pinecone) that this whole vault is built on.
+- **`wiki/concepts/notebooklm-workflow.md`** — the seven-bucket routing pattern (default + reminder + per-project) and the operational discipline around the dedupe sweep.
+
+These ship with `install.sh` via `obsidian/vault-template/wiki/` so a fresh clone has them on day one.
+
+### Code change discipline — install the karpathy-guidelines skill
+
+When editing existing code, the bundled `karpathy-guidelines` skill (mirror of [forrestchang/andrej-karpathy-skills](https://github.com/forrestchang/andrej-karpathy-skills), MIT) gates four behaviors:
+
+1. **Think Before Coding** — surface assumptions, present alternatives, ask before guessing.
+2. **Simplicity First** — minimum code that solves the problem; no speculative abstractions.
+3. **Surgical Changes** — touch only what's required; every changed line traces to the user's request; no drive-by refactors.
+4. **Goal-Driven Execution** — write multi-step plans as `[Step] → verify: [check]` so each step has its own success criterion.
+
+Three of these (Surgical Changes + Goal-Driven Execution most directly) are also stated as inline rules in the vault's `CLAUDE.md` "Code change discipline" subsection — that's the quick reference; the full skill is the canonical source. Install via `./install.sh` or pull the skill from `~/.claude/skills/karpathy-guidelines/SKILL.md` after install.
+
 ---
 
 ## End-of-Session Checklist — every session that touched files

@@ -60,14 +60,15 @@ fi
 # --- 3. Skills ---
 echo "[3/8] Installing skills to ~/.claude/skills/..."
 SKILLS_DIR="$HOME/.claude/skills"
-for skill in limitless-stack notebooklm four-tool-lookup roll-call verify-before-claim; do
+for skill in limitless-stack notebooklm four-tool-lookup roll-call verify-before-claim karpathy-guidelines; do
   mkdir -p "$SKILLS_DIR/$skill"
   cp "$SCRIPT_DIR/skills/$skill/SKILL.md" "$SKILLS_DIR/$skill/SKILL.md"
   echo "  ✓ $skill skill installed"
 done
 echo "  (limitless-stack = 7-tool protocol; notebooklm = full NotebookLM API;"
 echo "   four-tool-lookup = wiki → Pinecone → NotebookLM discipline;"
-echo "   roll-call = session-start preflight; verify-before-claim = guard against false unavailability claims)"
+echo "   roll-call = session-start preflight; verify-before-claim = guard against false unavailability claims;
+   karpathy-guidelines = surgical-change discipline borrowed from forrestchang/andrej-karpathy-skills)"
 
 # --- 4. Vault template ---
 if [ ! -d "$TARGET/wiki" ]; then
