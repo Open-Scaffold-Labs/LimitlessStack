@@ -25,6 +25,14 @@ cd "$VAULT" || { echo "ERROR: cannot cd to vault $VAULT"; exit 2; }
 LIMITLESS_PROJECT_ID="hub"  # default
 LIMITLESS_CHECKS=""
 LIMITLESS_DESCRIPTION=""
+LIMITLESS_PROJECT_ROUTES=""        # space-separated "label:filepath" pairs from manifest NOTEBOOKLM.routes
+LIMITLESS_DEDUPE_NOTEBOOKS=""      # space-separated "shortid:label" pairs for dedupe sweep
+LIMITLESS_REMINDER_FILES=""        # space-separated paths from manifest NOTEBOOKLM.reminder.files
+LIMITLESS_DEFAULT_NB_ID=""         # full UUID
+LIMITLESS_DEFAULT_NB_LABEL=""
+LIMITLESS_REMINDER_NB_ID=""
+LIMITLESS_OBSIDIAN_MIN_PAGES="10"  # default; manifest's OBSIDIAN.expected_min_pages overrides
+
 if [ -f "$VAULT/.limitless-project.py" ]; then
   LIMITLESS_MANIFEST_RAW=$(python3.11 -c "
 import importlib.util, sys
@@ -35,12 +43,41 @@ try:
     print('PROJECT_ID=' + getattr(m, 'PROJECT_ID', 'unknown'))
     print('CHECKS=' + ' '.join(getattr(m, 'CHECKS', [])))
     print('DESCRIPTION=' + getattr(m, 'DESCRIPTION', ''))
+    obs = getattr(m, 'OBSIDIAN', {}) or {}
+    print('OBSIDIAN_MIN_PAGES=' + str(obs.get('expected_min_pages', 10)))
+    nb = getattr(m, 'NOTEBOOKLM', {}) or {}
+    routes = nb.get('routes', [])
+    default = nb.get('default')
+    reminder = nb.get('reminder', {}) or {}
+    print('PROJECT_ROUTES=' + ' '.join(f'{r[2]}:{r[0]}' for r in routes))
+    dedupe_items = []
+    for r in routes:
+        dedupe_items.append(f'{r[1].split(chr(45))[0]}:{r[2]}')
+    if default:
+        dedupe_items.append(f'{default[0].split(chr(45))[0]}:{default[1]}')
+    if reminder.get('notebook_id'):
+        rid = reminder['notebook_id'].split('-')[0]
+        dedupe_items.append(f'{rid}:reminder')
+    print('DEDUPE_NOTEBOOKS=' + ' '.join(dedupe_items))
+    print('REMINDER_FILES=' + ' '.join(reminder.get('files', [])))
+    if default:
+        print('DEFAULT_NB_ID=' + default[0])
+        print('DEFAULT_NB_LABEL=' + default[1])
+    if reminder.get('notebook_id'):
+        print('REMINDER_NB_ID=' + reminder['notebook_id'])
 except Exception as e:
     print('ERROR=' + str(e), file=sys.stderr)
 " 2>&1)
   LIMITLESS_PROJECT_ID=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^PROJECT_ID=' | cut -d= -f2-)
   LIMITLESS_CHECKS=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^CHECKS=' | cut -d= -f2-)
   LIMITLESS_DESCRIPTION=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^DESCRIPTION=' | cut -d= -f2-)
+  LIMITLESS_OBSIDIAN_MIN_PAGES=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^OBSIDIAN_MIN_PAGES=' | cut -d= -f2-)
+  LIMITLESS_PROJECT_ROUTES=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^PROJECT_ROUTES=' | cut -d= -f2-)
+  LIMITLESS_DEDUPE_NOTEBOOKS=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^DEDUPE_NOTEBOOKS=' | cut -d= -f2-)
+  LIMITLESS_REMINDER_FILES=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^REMINDER_FILES=' | cut -d= -f2-)
+  LIMITLESS_DEFAULT_NB_ID=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^DEFAULT_NB_ID=' | cut -d= -f2-)
+  LIMITLESS_DEFAULT_NB_LABEL=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^DEFAULT_NB_LABEL=' | cut -d= -f2-)
+  LIMITLESS_REMINDER_NB_ID=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^REMINDER_NB_ID=' | cut -d= -f2-)
 fi
 
 # Returns 0 if a named check is enabled (in manifest CHECKS list, or no manifest = all enabled).
@@ -177,10 +214,10 @@ echo "[3/7] Obsidian wiki (knowledge base)"
 begin_tool "obsidian" "Obsidian" "Knowledge"
 if [ -r "$VAULT/wiki/index.md" ]; then
   PAGES=$(find "$VAULT/wiki" -name '*.md' | wc -l | tr -d ' ')
-  if [ "$PAGES" -gt 10 ]; then
+  if [ "$PAGES" -gt "$LIMITLESS_OBSIDIAN_MIN_PAGES" ]; then
     ok "wiki/index.md readable · $PAGES pages total"
   else
-    warn "only $PAGES wiki pages found" "expected >10; verify vault is intact"
+    warn "only $PAGES wiki pages found" "expected >$LIMITLESS_OBSIDIAN_MIN_PAGES (manifest OBSIDIAN.expected_min_pages); verify vault is intact or seed wiki content"
   fi
 else
   bad "wiki/index.md missing or unreadable" "verify vault path + Obsidian sync"
@@ -386,13 +423,15 @@ else
   fi
 
   # Per-project notebook freshness — each routed file compared against its route's state file.
-  # Keep this list in sync with NOTEBOOK_ROUTES in tools/notebooklm-wiki-refresh.py.
-  for route in \
-    "firehazmat:wiki/apps/firehazmat.md" \
-    "openchiropractor:wiki/apps/openchiropractor.md" \
-    "openfirehouse:wiki/apps/openfirehouse.md" \
-    "opensalon:wiki/apps/opensalon.md" \
-    "the-match:wiki/apps/the-match.md"; do
+  # Routes come from the project manifest's NOTEBOOKLM.routes list. Empty routes
+  # (the-match, simple verticals) → loop runs 0 iterations.
+  # Backwards-compat: no manifest → use Hub-vault hardcoded list.
+  if [ -n "$LIMITLESS_PROJECT_ROUTES" ] || [ -f "$VAULT/.limitless-project.py" ]; then
+    _ROUTE_LIST="$LIMITLESS_PROJECT_ROUTES"
+  else
+    _ROUTE_LIST="firehazmat:wiki/apps/firehazmat.md openchiropractor:wiki/apps/openchiropractor.md openfirehouse:wiki/apps/openfirehouse.md opensalon:wiki/apps/opensalon.md the-match:wiki/apps/the-match.md"
+  fi
+  for route in $_ROUTE_LIST; do
     label="${route%%:*}"
     file="${route#*:}"
     state_path="$VAULT/tools/.notebooklm-${label}-state.json"
@@ -417,8 +456,19 @@ else
 
   # Hub route (ca083f4f) — filename-prefix route, not a single file. Finds the
   # newest wiki/synthesis/hub-*.md file and compares to the hub state file.
+  # Only run this check if 'hub' is in the project's routes — Hub-vault-specific.
   HUB_STATE="$VAULT/tools/.notebooklm-hub-state.json"
-  if [ ! -f "$HUB_STATE" ]; then
+  _HAS_HUB_ROUTE=false
+  if echo " $LIMITLESS_PROJECT_ROUTES " | grep -q ' hub:'; then
+    _HAS_HUB_ROUTE=true
+  fi
+  # Backwards-compat: if no manifest, assume Hub-vault layout (has hub route)
+  if [ ! -f "$VAULT/.limitless-project.py" ]; then
+    _HAS_HUB_ROUTE=true
+  fi
+  if ! $_HAS_HUB_ROUTE; then
+    : # skip hub route check — project doesn't have one
+  elif [ ! -f "$HUB_STATE" ]; then
     warn "no notebooklm hub state file" "python3.11 tools/notebooklm-wiki-refresh.py --seed --only hub"
   else
     HUB_NEWEST_TS=$(find "$VAULT/wiki/synthesis" -name 'hub-*.md' -type f -exec stat -f '%m' {} \; 2>/dev/null | sort -n | tail -1)
@@ -478,13 +528,14 @@ else
   AB_STALE=0
   AB_UNVERIFIED=0
   if [ -f "$REMINDER_STATE" ]; then
-    for entry in \
-      "CLAUDE.md:CLAUDE.md" \
-      "wiki/synthesis/claude-anti-patterns.md:wiki/synthesis/claude-anti-patterns.md" \
-      "wiki/concepts/limitless-stack.md:wiki/concepts/limitless-stack.md" \
-      "wiki/concepts/paperclip.md:wiki/concepts/paperclip.md" \
-      "wiki/apps/limitless-stack-hub.md:wiki/apps/limitless-stack-hub.md"; do
-      rel="${entry%%:*}"
+    # Reminder file list comes from the manifest's NOTEBOOKLM.reminder.files.
+    # Backwards-compat: no manifest → use Hub-vault's hardcoded 5-file list.
+    if [ -n "$LIMITLESS_REMINDER_FILES" ] || [ -f "$VAULT/.limitless-project.py" ]; then
+      _REMINDER_FILE_LIST="$LIMITLESS_REMINDER_FILES"
+    else
+      _REMINDER_FILE_LIST="CLAUDE.md wiki/synthesis/claude-anti-patterns.md wiki/concepts/limitless-stack.md wiki/concepts/paperclip.md wiki/apps/limitless-stack-hub.md"
+    fi
+    for rel in $_REMINDER_FILE_LIST; do
       f="$VAULT/$rel"
       [ -f "$f" ] || continue
       FILE_TS=$(stat -f '%m' "$f" 2>/dev/null || echo 0)
@@ -536,7 +587,13 @@ except Exception:
     # Notebook id → state-label mapping for the suggested dedupe command.
     # Keep in sync with NOTEBOOK_ROUTES in tools/notebooklm-wiki-refresh.py
     # plus the reminder + default-wiki buckets.
-    notebooks="cdaa7a43:wiki ab4b7ccb:reminder f376f6e8:firehazmat 26a8db12:openchiropractor 9c8f3df0:openfirehouse 0a072ead:opensalon ca083f4f:hub e9337dea:the-match"
+    # Notebooks to dedupe-sweep come from the manifest. Backwards-compat:
+    # no manifest → use Hub-vault hardcoded list.
+    if [ -n "$LIMITLESS_DEDUPE_NOTEBOOKS" ] || [ -f "$VAULT/.limitless-project.py" ]; then
+      notebooks="$LIMITLESS_DEDUPE_NOTEBOOKS"
+    else
+      notebooks="cdaa7a43:wiki ab4b7ccb:reminder f376f6e8:firehazmat 26a8db12:openchiropractor 9c8f3df0:openfirehouse 0a072ead:opensalon ca083f4f:hub e9337dea:the-match"
+    fi
     sweep_total=0
     sweep_dirty=""
     sweep_skipped=0

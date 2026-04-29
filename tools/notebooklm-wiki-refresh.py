@@ -619,7 +619,11 @@ def sync_route(notebook_id: str, label: str, display: str, files: list[Path], dr
     """Refresh/add/delete sources in `notebook_id` against the routed `files`."""
     state_path = state_file_for(label)
     state = load_state(state_path)
-    if not state and files:
+    # Bail only if state file genuinely doesn't exist — empty state {} is
+    # valid (fresh seed against an empty notebook). The original check
+    # `if not state and files` falsely treated empty state as missing,
+    # which broke the freshly-init'd-project flow on 2026-04-29.
+    if not state_path.exists() and files:
         print(f"[{display}] ERROR: no state file ({state_path.name}). Run with --seed first.",
               file=sys.stderr)
         return
@@ -777,7 +781,9 @@ def seed_reminder(dry_run: bool) -> None:
 def sync_reminder(dry_run: bool, force: bool = False) -> None:
     """Refresh changed files in ab4b7ccb. Add any allowlisted files missing from notebook. Never delete."""
     state = load_reminder_state()
-    if not state:
+    # Bail only if state file genuinely doesn't exist — empty {} state is
+    # valid for a fresh seed against an empty reminder notebook.
+    if not REMINDER_STATE_FILE.exists():
         print(f"\n[reminder] no state file — run with --seed first to map source IDs.",
               file=sys.stderr)
         return
