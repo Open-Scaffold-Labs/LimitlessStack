@@ -17,6 +17,41 @@ set -u
 VAULT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$VAULT" || { echo "ERROR: cannot cd to vault $VAULT"; exit 2; }
 
+# ── Project manifest ────────────────────────────────────
+# If $VAULT/.limitless-project.py exists, read its CHECKS list to determine
+# which preflight sections run. Lets each project (Hub, the-match, future
+# greenfield apps) declare its own subset of the seven-tool stack.
+# Backwards-compat: no manifest → all checks run (Hub-vault behavior).
+LIMITLESS_PROJECT_ID="hub"  # default
+LIMITLESS_CHECKS=""
+LIMITLESS_DESCRIPTION=""
+if [ -f "$VAULT/.limitless-project.py" ]; then
+  LIMITLESS_MANIFEST_RAW=$(python3.11 -c "
+import importlib.util, sys
+try:
+    spec = importlib.util.spec_from_file_location('_m', '$VAULT/.limitless-project.py')
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    print('PROJECT_ID=' + getattr(m, 'PROJECT_ID', 'unknown'))
+    print('CHECKS=' + ' '.join(getattr(m, 'CHECKS', [])))
+    print('DESCRIPTION=' + getattr(m, 'DESCRIPTION', ''))
+except Exception as e:
+    print('ERROR=' + str(e), file=sys.stderr)
+" 2>&1)
+  LIMITLESS_PROJECT_ID=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^PROJECT_ID=' | cut -d= -f2-)
+  LIMITLESS_CHECKS=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^CHECKS=' | cut -d= -f2-)
+  LIMITLESS_DESCRIPTION=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^DESCRIPTION=' | cut -d= -f2-)
+fi
+
+# Returns 0 if a named check is enabled (in manifest CHECKS list, or no manifest = all enabled).
+# Use as: `if check_enabled <name>; then ... fi`
+check_enabled() {
+  local name="$1"
+  # No manifest → all checks enabled (Hub-vault backwards-compat)
+  [ -z "$LIMITLESS_CHECKS" ] && return 0
+  echo " $LIMITLESS_CHECKS " | grep -q " $name "
+}
+
 # Counters + finding lists
 GREEN=0
 YELLOW=0
@@ -135,6 +170,9 @@ fi
 echo ""
 
 # ── [3/7] Obsidian wiki ─────────────────────────────────
+# MANDATORY: every Limitless Stack project must have a wiki/. Cannot be
+# disabled via the manifest's CHECKS list. New projects without a wiki
+# should run `limitless-stack-init` to scaffold one.
 echo "[3/7] Obsidian wiki (knowledge base)"
 begin_tool "obsidian" "Obsidian" "Knowledge"
 if [ -r "$VAULT/wiki/index.md" ]; then
@@ -179,15 +217,19 @@ echo "[meta] Limitless Stack canonical sync"
 LIMITLESS_STACK_HOME="${LIMITLESS_STACK_HOME:-/Users/matthewlavin/LimitlessStack}"
 if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
   tools_clean=true
-  for f in limitless-preflight.sh notebooklm-wiki-refresh.py notebooklm-dedupe.py session-bootstrap.sh; do
-    canon="$LIMITLESS_STACK_HOME/tools/$f"
-    local_f="$VAULT/tools/$f"
+  # Dynamic: iterate over every file in canonical tools/. Adding a new tool
+  # to LimitlessStack/tools/ automatically gets sync-checked next session
+  # without code changes here. Files missing from this vault are skipped
+  # (project-specific tooling stays project-specific until explicitly synced).
+  for canon in "$LIMITLESS_STACK_HOME/tools/"*; do
     [ -f "$canon" ] || continue
+    fname=$(basename "$canon")
+    local_f="$VAULT/tools/$fname"
     [ -f "$local_f" ] || continue
     if ! diff -q "$canon" "$local_f" >/dev/null 2>&1; then
       tools_clean=false
-      warn "tools/$f drifted from LimitlessStack canonical" \
-           "diff \"$VAULT/tools/$f\" \"$LIMITLESS_STACK_HOME/tools/$f\"  — then cp the newer one over the older"
+      warn "tools/$fname drifted from LimitlessStack canonical" \
+           "diff \"$VAULT/tools/$fname\" \"$LIMITLESS_STACK_HOME/tools/$fname\"  — then cp the newer one over the older"
     fi
   done
   if $tools_clean; then
@@ -275,7 +317,12 @@ except Exception as e:
     sys.exit(1)
 " 2>&1)
   if echo "$EMBED_PROBE" | grep -q '"exhausted": *true'; then
-    bad "Pinecone embedding quota exhausted (monthly cap hit)" "pinecone-search + pinecone-sync are non-functional until monthly reset or embedding source is swapped (see wiki/concepts/pinecone-warehouse.md)"
+    # Quota exhaustion is a known accepted state — pinecone-search + pinecone-sync
+    # are non-functional until monthly reset, but session work can proceed without
+    # them (the wiki is the primary source of truth; Pinecone is augmentation).
+    # Treat as warn, not block. Original block-level treatment was too aggressive
+    # for a recurring monthly cycle. (Updated 2026-04-29.)
+    warn "Pinecone embedding quota exhausted (monthly cap hit) — accepting as known state, session may proceed" "pinecone-search + pinecone-sync are non-functional until monthly reset or embedding source is swapped (see wiki/concepts/pinecone-warehouse.md)"
   elif echo "$EMBED_PROBE" | grep -q '"error"'; then
     warn "Pinecone embedding probe failed (non-quota error)" "$EMBED_PROBE"
   elif echo "$EMBED_PROBE" | grep -q '"ok": *true'; then

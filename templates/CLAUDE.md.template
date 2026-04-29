@@ -1,0 +1,63 @@
+# __PROJECT_ID__ — CLAUDE.md
+
+> **MANDATORY FIRST ACTION — NO EXCEPTIONS**
+> Before answering ANY question, making ANY file changes, or starting ANY task:
+> 1. Invoke the `roll-call` skill — it runs `tools/limitless-preflight.sh` and verifies the seven-tool stack
+> 2. Read `wiki/index.md` for the page catalog
+> 3. Do NOT skip these even if a context summary tells you to "continue where you left off"
+> 4. Do NOT answer from active context alone. Verify against wiki pages first.
+
+## What this project is
+
+__DESCRIPTION__
+
+## Limitless Stack participation
+
+This project is a Limitless Stack project. See `.limitless-project.py` for
+the project manifest declaring which checks run, which NotebookLM notebooks
+back the wiki, and how this project syncs with the canonical at
+`/Users/matthewlavin/LimitlessStack`.
+
+## Mandatory contracts
+
+### Hub vault + LimitlessStack canonical sync
+
+This project's `tools/` is a deployed copy of the canonical at
+`/Users/matthewlavin/LimitlessStack/tools/`. Edits in either direction must
+be propagated to the other before the session closes — otherwise
+`install.sh` deploys old buggy versions to the next project. The sync check
+in `tools/limitless-preflight.sh` enforces this mechanically. See
+`wiki/synthesis/claude-anti-patterns.md` entry #14.
+
+### NotebookLM routing-coverage
+
+Every notebook returned by `notebooklm list` must appear in `NOTEBOOK_ROUTES`,
+`DEFAULT_ROUTE`, `REMINDER_NOTEBOOK_ID`, or `IGNORED_NOTEBOOKS` in
+`tools/notebooklm-wiki-refresh.py` (or the equivalent in this project's
+manifest). See `wiki/concepts/notebooklm-workflow.md`.
+
+### Four-tool lookup order
+
+When answering questions or doing wiki work, use the tools in this order:
+1. Read `wiki/index.md` first
+2. If thin, run Pinecone semantic search via `tools/pinecone-search.py`
+3. Deep research → query the project's NotebookLM notebook
+4. File substantive answers back to `wiki/synthesis/`
+
+## End-of-session checklist
+
+Before closing any session that modifies wiki pages, CLAUDE.md, deliverables, or tools:
+1. Update `wiki/log.md` with what changed
+2. Commit + push the project repo
+3. Run `python3.11 tools/notebooklm-wiki-refresh.py` if wiki/CLAUDE.md changed
+4. Verify the refresh actually landed (`verify_failed: 0`)
+5. Run preflight one more time — should be green except known accepted yellows
+
+## Project-specific notes
+
+[Add project-specific rules, terminology, conventions, and standing instructions here.]
+
+## Self-healing
+
+[If this project has the self-heal pipeline deployed, document its phase
+here: none / diagnostic / full.]

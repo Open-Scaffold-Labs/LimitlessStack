@@ -1,0 +1,155 @@
+#!/bin/bash
+# limitless-stack-init <project_id> <target_path>
+#
+# Scaffolds a new Limitless Stack project at <target_path>:
+#   1. Creates target_path if missing
+#   2. Copies tools/ from canonical (LimitlessStack/tools/)
+#   3. Copies wiki/ skeleton from canonical (LimitlessStack/obsidian/vault-template/wiki/)
+#   4. Copies anti-patterns base into wiki/synthesis/claude-anti-patterns.md
+#   5. Creates .limitless-project.py manifest from template (with project_id substituted)
+#   6. Creates CLAUDE.md from template
+#   7. Prints next-step instructions for creating the NotebookLM notebook
+#
+# After running this, the user must:
+#   - Create a NotebookLM notebook for the project (instructions printed)
+#   - Edit .limitless-project.py to fill in the notebook IDs
+#   - Run tools/notebooklm-wiki-refresh.py --seed to seed state files
+#   - Run preflight to verify
+#
+# Usage:
+#   /Users/matthewlavin/LimitlessStack/bin/limitless-stack-init my-project /path/to/target
+#
+# Or symlink to a directory on PATH for shorter invocation:
+#   ln -s /Users/matthewlavin/LimitlessStack/bin/limitless-stack-init /usr/local/bin/
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIMITLESS_STACK_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# ── Args ────────────────────────────────────────────────
+if [ "$#" -lt 2 ]; then
+  echo "Usage: limitless-stack-init <project_id> <target_path> [--description \"...\"]"
+  echo ""
+  echo "  project_id     kebab-case unique identifier for this project"
+  echo "  target_path    where to scaffold the project (created if missing)"
+  echo ""
+  echo "Examples:"
+  echo "  limitless-stack-init the-match /Users/me/the-match"
+  echo "  limitless-stack-init firehazmat /Users/me/firehazmat --description 'Firefighter hazmat reference app'"
+  exit 1
+fi
+
+PROJECT_ID="$1"
+TARGET="$2"
+shift 2
+
+DESCRIPTION="Limitless Stack project — $PROJECT_ID"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --description) DESCRIPTION="$2"; shift 2 ;;
+    --description=*) DESCRIPTION="${1#*=}"; shift ;;
+    *) echo "Unknown arg: $1" >&2; exit 1 ;;
+  esac
+done
+
+# Normalize TARGET to absolute path
+mkdir -p "$TARGET"
+TARGET="$(cd "$TARGET" && pwd)"
+
+echo "═══════════════════════════════════════════════════════"
+echo "  LIMITLESS STACK — INIT"
+echo "  project_id:  $PROJECT_ID"
+echo "  target:      $TARGET"
+echo "  source:      $LIMITLESS_STACK_HOME"
+echo "  description: $DESCRIPTION"
+echo "═══════════════════════════════════════════════════════"
+echo ""
+
+# ── 1/6: tools/ ─────────────────────────────────────────
+echo "[1/6] Copying tools/ from canonical..."
+mkdir -p "$TARGET/tools"
+copied=0
+for f in "$LIMITLESS_STACK_HOME/tools/"*; do
+  [ -f "$f" ] || continue
+  cp "$f" "$TARGET/tools/"
+  copied=$((copied + 1))
+done
+echo "  ✓ $copied files copied to tools/"
+
+# ── 2/6: wiki/ skeleton ─────────────────────────────────
+echo "[2/6] Copying wiki/ skeleton..."
+if [ -d "$TARGET/wiki" ]; then
+  echo "  ⚠ wiki/ already exists — skipping (existing content preserved)"
+else
+  cp -r "$LIMITLESS_STACK_HOME/obsidian/vault-template/wiki" "$TARGET/wiki"
+  mkdir -p "$TARGET/wiki/apps" "$TARGET/wiki/entities"
+  echo "  ✓ wiki/ created with starter pages"
+fi
+
+# ── 3/6: anti-patterns base ─────────────────────────────
+echo "[3/6] Installing anti-patterns base..."
+if [ -f "$TARGET/wiki/synthesis/claude-anti-patterns.md" ]; then
+  # vault-template already includes one — leave it alone
+  echo "  ⊘ wiki/synthesis/claude-anti-patterns.md already present (vault-template default kept)"
+else
+  cp "$LIMITLESS_STACK_HOME/templates/anti-patterns-base.md" "$TARGET/wiki/synthesis/claude-anti-patterns.md"
+  echo "  ✓ wiki/synthesis/claude-anti-patterns.md installed (14 anti-patterns)"
+fi
+
+# ── 4/6: manifest ───────────────────────────────────────
+echo "[4/6] Creating .limitless-project.py manifest..."
+if [ -f "$TARGET/.limitless-project.py" ]; then
+  echo "  ⚠ .limitless-project.py already exists — skipping"
+else
+  sed -e "s|__PROJECT_ID__|$PROJECT_ID|g" \
+      -e "s|__DESCRIPTION__|$DESCRIPTION|g" \
+      "$LIMITLESS_STACK_HOME/templates/limitless-project.template.py" \
+      > "$TARGET/.limitless-project.py"
+  echo "  ✓ .limitless-project.py created (notebook IDs are placeholders — see next steps)"
+fi
+
+# ── 5/6: CLAUDE.md ──────────────────────────────────────
+echo "[5/6] Creating CLAUDE.md..."
+if [ -f "$TARGET/CLAUDE.md" ]; then
+  echo "  ⚠ CLAUDE.md already exists — skipping (existing content preserved)"
+else
+  sed -e "s|__PROJECT_ID__|$PROJECT_ID|g" \
+      -e "s|__DESCRIPTION__|$DESCRIPTION|g" \
+      "$LIMITLESS_STACK_HOME/templates/CLAUDE.md.template" \
+      > "$TARGET/CLAUDE.md"
+  echo "  ✓ CLAUDE.md created"
+fi
+
+# ── 6/6: Done — print next steps ────────────────────────
+echo "[6/6] Done. Next steps:"
+echo ""
+echo "─────────────────────────────────────────────────────"
+echo "  REQUIRED before running preflight:"
+echo "─────────────────────────────────────────────────────"
+echo ""
+echo "  1. Create the project's MAIN NotebookLM notebook (default bucket):"
+echo "       notebooklm create $PROJECT_ID"
+echo "     Note the returned notebook ID."
+echo ""
+echo "  2. Create the project's REMINDER NotebookLM notebook:"
+echo "       notebooklm create '$PROJECT_ID Reminder'"
+echo "     Note the returned notebook ID. This is the curated reminder layer."
+echo ""
+echo "  3. Edit $TARGET/.limitless-project.py:"
+echo "     - Replace REPLACE_WITH_NEW_NOTEBOOK_ID with the main notebook ID"
+echo "     - Replace REPLACE_WITH_REMINDER_NOTEBOOK_ID with the reminder ID"
+echo ""
+echo "  4. Seed initial state files:"
+echo "       cd $TARGET && python3.11 tools/notebooklm-wiki-refresh.py --seed"
+echo ""
+echo "  5. Initialize git (if not already):"
+echo "       cd $TARGET && git init && git add . && git commit -m 'initial commit (limitless-stack-init)'"
+echo ""
+echo "  6. Run Roll Call to verify everything works:"
+echo "       bash $TARGET/tools/limitless-preflight.sh"
+echo ""
+echo "─────────────────────────────────────────────────────"
+echo "  The first preflight run will WARN that the notebook IDs are placeholders."
+echo "  After step 3, that warning resolves."
+echo "─────────────────────────────────────────────────────"

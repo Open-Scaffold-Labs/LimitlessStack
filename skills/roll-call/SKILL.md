@@ -18,6 +18,14 @@ The #1 failure mode on this project (see [[synthesis/claude-anti-patterns]] entr
 
 Reading the prose rules in CLAUDE.md relies on Claude's discipline. Roll Call replaces discipline with a script that *cannot* be forgotten once it's called.
 
+## Project-aware dispatch
+
+Roll Call runs `tools/limitless-preflight.sh` from **whichever vault is currently open** — the preflight is per-project, not global. Each project's preflight reads `.limitless-project.py` (the project manifest) at the vault root to determine which checks apply and what notebook IDs / Pinecone index / sync paths to use.
+
+For the Hub vault (`/Users/matthewlavin/Claude code antigravity/obsidian`), check #5 specifics are: `notebooklm auth check --test` passes; `cdaa7a43` mirror fresh; `ab4b7ccb` reminder sources newer than the files they mirror. **Other projects (the-match, future verticals) will have their own notebook IDs declared in their manifests** — read each project's `.limitless-project.py` before assuming the Hub IDs apply.
+
+To scaffold a new project that participates in Roll Call: run `/Users/matthewlavin/LimitlessStack/bin/limitless-stack-init <project_id> <target_path>`. That installs tools/, wiki/, CLAUDE.md, and a manifest skeleton.
+
 ## What Roll Call does
 
 Runs `tools/limitless-preflight.sh` on Matt's Mac (via `mcp__desktop-commander__start_process`) and interprets the exit code.

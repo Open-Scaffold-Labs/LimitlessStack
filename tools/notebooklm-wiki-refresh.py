@@ -137,6 +137,54 @@ REMINDER_TITLE_ALIASES = {
 }
 
 
+# ── Project manifest override ────────────────────────────────────────────
+# If a `.limitless-project.py` manifest exists at $VAULT root, its NOTEBOOKLM
+# block overrides the hardcoded defaults above. This is what lets the
+# Limitless Stack tools work across multiple projects — each vault declares
+# its own routing/reminder/ignored config in its manifest.
+#
+# Backwards-compat: no manifest → use the Hub-vault defaults defined above.
+# Non-NOTEBOOKLM manifest blocks (PINECONE, SYNC_CHECK, etc.) are read by
+# the bash preflight via a Python helper; this module only consumes
+# NOTEBOOKLM. See `tools/limitless-project-loader.py` for the bash bridge.
+def _load_manifest():
+    """Load .limitless-project.py from $VAULT if present. Returns the
+    manifest module's namespace dict, or {} on absence/error."""
+    manifest_path = VAULT / ".limitless-project.py"
+    if not manifest_path.exists():
+        return {}
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_lsm", manifest_path)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return {k: v for k, v in vars(m).items() if not k.startswith("_")}
+    except Exception as e:
+        print(f"WARNING: failed to load manifest at {manifest_path}: {e}",
+              file=sys.stderr)
+        return {}
+
+_MANIFEST = _load_manifest()
+_NB_MANIFEST = _MANIFEST.get("NOTEBOOKLM", {})
+
+if "routes" in _NB_MANIFEST:
+    NOTEBOOK_ROUTES = _NB_MANIFEST["routes"]
+    PROJECT_LABELS = [r[2] for r in NOTEBOOK_ROUTES]
+if "default" in _NB_MANIFEST:
+    DEFAULT_ROUTE = _NB_MANIFEST["default"]
+if "ignored" in _NB_MANIFEST:
+    IGNORED_NOTEBOOKS = _NB_MANIFEST["ignored"]
+if "exclude_paths" in _NB_MANIFEST:
+    EXCLUDE_FROM_NOTEBOOKS = _NB_MANIFEST["exclude_paths"]
+_REMINDER = _NB_MANIFEST.get("reminder", {})
+if "notebook_id" in _REMINDER:
+    REMINDER_NOTEBOOK_ID = _REMINDER["notebook_id"]
+if "files" in _REMINDER:
+    REMINDER_FILES = _REMINDER["files"]
+if "title_aliases" in _REMINDER:
+    REMINDER_TITLE_ALIASES = _REMINDER["title_aliases"]
+
+
 def reminder_title_for(rel_path: str, basename: str) -> str:
     """Title to look up (or use when adding) in ab4b7ccb."""
     return REMINDER_TITLE_ALIASES.get(rel_path, basename)
