@@ -49,10 +49,30 @@ NOTEBOOK_ROUTES = [
     ("wiki/apps/openchiropractor.md", "26a8db12-1543-4567-944d-c64a0d338acc", "openchiropractor", "openchiropractor"),
     ("wiki/apps/openfirehouse.md",    "9c8f3df0-5ebe-4523-85c2-dfdcf4e7dd02", "openfirehouse",    "openfirehouse"),
     ("wiki/apps/opensalon.md",        "0a072ead-e919-414a-80f7-27d5f1487afc", "opensalon",        "opensalon"),
+    ("wiki/apps/the-match.md",        "e9337dea-f7cd-4fba-aabc-621d15ecc336", "the-match",        "the-match"),
     ("wiki/synthesis/hub-",           "ca083f4f-afd8-438a-9da6-339dec7c87f8", "hub",              "hub"),
 ]
 # Fallback: (notebook_id, state_label, display_label)
-DEFAULT_ROUTE = ("cdaa7a43", "wiki", "wiki")
+DEFAULT_ROUTE = ("cdaa7a43-774e-4113-8288-207669dd981f", "wiki", "wiki")
+
+# ── Ignored notebooks ─────────────────────────────────────────────────────
+# Notebooks that exist in NotebookLM but are intentionally NOT routed by this
+# script — research/reference buckets curated manually, archived experiments,
+# or empty test notebooks. The preflight's notebook-coverage check uses this
+# list to suppress orphan warnings. To START routing one of these, move it
+# from here to NOTEBOOK_ROUTES.
+#
+# Contract: every notebook returned by `notebooklm list` MUST appear in one of
+# {NOTEBOOK_ROUTES, DEFAULT_ROUTE, REMINDER_NOTEBOOK_ID, IGNORED_NOTEBOOKS}.
+# That contract closes the "TheMatch silently unrouted for weeks" gap caught
+# 2026-04-29 — see wiki/log.md for the schema entry.
+IGNORED_NOTEBOOKS = {
+    "733f98ef-ed33-42ca-a549-f6fc1731d5b5": "OpenScaffold Architecture (curated DOCX reference, not wiki-mirrored)",
+    "1a0a0c47-e862-4fac-be42-70b75e0f883c": "OpenScaffold Business (curated DOCX reference, not wiki-mirrored)",
+    "9830f04f-e29a-4c31-a758-d62867a9199f": "ERG Research (curated PDF reference)",
+    "f386d513-5a6c-44e0-9a27-3d74340ebda6": "(untitled) empty test notebook",
+    "75e0f097-9343-4a89-939b-1e1d9fd205cc": "(untitled) empty test notebook",
+}
 
 PROJECT_LABELS = [r[2] for r in NOTEBOOK_ROUTES]  # ["firehazmat", "openchiropractor", ..., "hub"]
 
@@ -364,6 +384,47 @@ def cmd_verify_content(source_id: str, path: Path, wait_retries: int = 5) -> boo
     return False
 
 
+def _claim_unique_title(title: str, keep_sid: str) -> int:
+    """After uploading a source, sweep any OTHER sources in the active
+    notebook with the same title. Returns the number of ghost dupes deleted.
+
+    Defends against the NotebookLM API's eventual-consistency window where
+    cmd_replace's post-delete check shows the old source as gone, then the
+    source reappears (or was never actually deleted) after cmd_add. Without
+    this sweep, the result is two copies of the same file in the notebook
+    despite cmd_replace's own delete+verify protection — observed twice in
+    a single session 2026-04-29 (cdaa7a43/claude-anti-patterns.md and
+    ab4b7ccb/CLAUDE.md), confirming the failure mode is real and not rare.
+
+    Belt-and-suspenders: cmd_replace's first-line abort handles the
+    optimistic case (delete is visible as gone → safe to add); this sweep
+    handles the case where the API silently lied about the delete being
+    visible. See anti-pattern #12 for the full failure mode.
+    """
+    listing = run_nb(["source", "list", "--json"])
+    if listing.returncode != 0:
+        return 0
+    try:
+        data = json.loads(listing.stdout)
+    except Exception:
+        return 0
+    sources = data if isinstance(data, list) else data.get("sources", [])
+
+    same_title = [s for s in sources if (s.get("title") or "") == title]
+    if len(same_title) <= 1:
+        return 0  # no ghost dupes to sweep
+
+    swept = 0
+    for s in same_title:
+        sid = s.get("id") or s.get("source_id")
+        if not sid or sid == keep_sid:
+            continue  # the one we just uploaded — skip
+        # cmd_delete has its own pre/post-check guards; trust its bool here.
+        if cmd_delete(sid):
+            swept += 1
+    return swept
+
+
 def cmd_replace(path: Path, old_source_id: str | None) -> tuple[str | None, bool]:
     """Replace a source's content: delete the old one (if any), add the new
     file, and verify the content actually landed in NotebookLM.
@@ -373,6 +434,12 @@ def cmd_replace(path: Path, old_source_id: str | None) -> tuple[str | None, bool
     means NotebookLM hasn't finished indexing within the wait window. The
     caller should treat verified=False as a failure mode and either retry
     or flag it prominently.
+
+    Triple-defended against ghost duplicates:
+      1. cmd_delete's own pre/post-check (existed before).
+      2. Re-list + abort if old source still present (existed before).
+      3. _claim_unique_title sweep AFTER successful add (added 2026-04-29
+         after observing the eventual-consistency window bypass guards 1+2).
     """
     # Step 1: delete the old source if we have one, then VERIFY it's gone.
     # cmd_delete returns False both for "delete failed" AND "source didn't
@@ -382,6 +449,13 @@ def cmd_replace(path: Path, old_source_id: str | None) -> tuple[str | None, bool
     # duplicates discovered in cdaa7a43 on 2026-04-26). Abort instead.
     if old_source_id:
         cmd_delete(old_source_id)
+        # Settle delay: NotebookLM's source list has a ~1-2s eventual-
+        # consistency window after a delete where the deleted source may
+        # still appear (or, more dangerously, may temporarily NOT appear
+        # before reappearing). Sleep before the post-check to reduce the
+        # false-"looks gone" rate. Belt-and-suspenders with the
+        # _claim_unique_title sweep below.
+        time.sleep(2)
         # Re-check live state regardless of cmd_delete's bool. The CLI exits
         # 0 in too many edge cases for the bool alone to be load-bearing.
         check = run_nb(["source", "list", "--json"])
@@ -410,6 +484,15 @@ def cmd_replace(path: Path, old_source_id: str | None) -> tuple[str | None, bool
 
     # Step 3: verify content actually indexed.
     verified = cmd_verify_content(new_sid, path)
+
+    # Step 4: ghost-dupe sweep — final safety net for the eventual-consistency
+    # case where steps 1's post-check thought the old source was gone but it
+    # actually wasn't (or it came back after the add). Without this, we'd
+    # leave a stale copy in the notebook for the next preflight to catch.
+    ghosts = _claim_unique_title(path.name, new_sid)
+    if ghosts > 0:
+        print(f"    ! ghost-dupe sweep removed {ghosts} stale copy/copies of {path.name}")
+
     return new_sid, verified
 
 
@@ -547,6 +630,11 @@ def sync_route(notebook_id: str, label: str, display: str, files: list[Path], dr
                 sid = cmd_add(path)
                 if sid:
                     verified = cmd_verify_content(sid, path)
+                    # Ghost-dupe sweep: defends against a previous failed
+                    # refresh having left an orphan source for this filename.
+                    ghosts = _claim_unique_title(path.name, sid)
+                    if ghosts > 0:
+                        print(f"    ! ghost-dupe sweep removed {ghosts} stale copy/copies of {rel}")
                     now_ts = time.time()
                     entry_new = {"mtime": mtime, "source_id": sid}
                     if verified:
@@ -686,6 +774,14 @@ def sync_reminder(dry_run: bool, force: bool = False) -> None:
                 sid = cmd_add(path)
                 if sid:
                     verified = cmd_verify_content(sid, path)
+                    # Ghost-dupe sweep — same as sync_route's new-file branch.
+                    # Uses path.name because cmd_add titles uploads by filename.
+                    # REMINDER_TITLE_ALIASES is only relevant for seed matching
+                    # of pre-existing manually-renamed sources; new uploads
+                    # don't pick up the alias.
+                    ghosts = _claim_unique_title(path.name, sid)
+                    if ghosts > 0:
+                        print(f"    ! ghost-dupe sweep removed {ghosts} stale copy/copies of {rel}")
                     now_ts = time.time()
                     entry_new = {"mtime": mtime, "source_id": sid}
                     if verified:
@@ -718,6 +814,52 @@ def sync_reminder(dry_run: bool, force: bool = False) -> None:
     print(summary)
 
 
+# ── Notebook coverage check ──────────────────────────────────────────────
+# Compares NotebookLM's actual notebook list against the script's known set
+# (NOTEBOOK_ROUTES + DEFAULT_ROUTE + REMINDER_NOTEBOOK_ID + IGNORED_NOTEBOOKS)
+# and reports orphans. Called by the preflight via `--check-coverage`. Closes
+# the gap that let TheMatch (e9337dea) sit unrouted for weeks (2026-04-29).
+def check_coverage() -> int:
+    """Print orphan notebooks, one per line as 'ID<TAB>title'.
+    Returns: 0 if no orphans, N>0 if N orphans, -1 on tool failure."""
+    listing = run_nb(["list", "--json"])
+    if listing.returncode != 0:
+        print(f"notebooklm list failed: {listing.stderr}", file=sys.stderr)
+        return -1
+    try:
+        data = json.loads(listing.stdout)
+    except Exception as e:
+        print(f"notebooklm list JSON parse failed: {e}", file=sys.stderr)
+        return -1
+    notebooks = data.get("notebooks", []) if isinstance(data, dict) else data
+
+    # Build the "known" set: routed + default + reminder + ignored.
+    known: set[str] = set()
+    for _prefix, nbid, _label, _display in NOTEBOOK_ROUTES:
+        known.add(nbid)
+    known.add(DEFAULT_ROUTE[0])
+    # Reminder ID is stored in short form (ab4b7ccb) historically; we accept
+    # both short and full UUID forms via prefix matching below.
+    known.add(REMINDER_NOTEBOOK_ID)
+    known.update(IGNORED_NOTEBOOKS.keys())
+
+    def _is_known(nid: str) -> bool:
+        # Match exact OR prefix (so a short-form known ID matches a full UUID)
+        return any(nid == k or nid.startswith(k) for k in known)
+
+    orphans = []
+    for nb in notebooks:
+        nid = nb.get("id")
+        title = (nb.get("title") or "(untitled)").strip()
+        if nid and not _is_known(nid):
+            orphans.append((nid, title))
+
+    for nid, title in orphans:
+        # Tab-separated so the bash preflight can parse with IFS=$'\t'
+        print(f"{nid}\t{title}")
+    return len(orphans)
+
+
 # ── Main ─────────────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser(
@@ -735,6 +877,11 @@ def main():
                              "after a verify-function improvement to backfill verified_at "
                              "without paying for another full delete+re-add sync.")
     parser.add_argument("--skip-auth-check", action="store_true")
+    parser.add_argument("--check-coverage", action="store_true",
+                        help="compare NotebookLM's notebooks against routing + IGNORED_NOTEBOOKS. "
+                             "Print orphans (one per line, ID<TAB>title) and exit. "
+                             "Exit 0 if all known, 1 if N orphans, 2 on tool failure. "
+                             "Used by tools/limitless-preflight.sh.")
     only_choices = ["wiki", "reminder", "all-projects"] + PROJECT_LABELS
     parser.add_argument("--only", choices=only_choices,
                         help="run only one route. 'wiki' = default bucket (cdaa7a43) only; "
@@ -745,6 +892,14 @@ def main():
     if not args.skip_auth_check:
         if not check_auth():
             sys.exit(1)
+
+    # --check-coverage runs before route selection; it has its own exit semantics.
+    # 0 = all notebooks routed/ignored, 1 = orphans found, 2 = tool failure.
+    if args.check_coverage:
+        n = check_coverage()
+        if n < 0:
+            sys.exit(2)
+        sys.exit(0 if n == 0 else 1)
 
     # Decide which route labels (project + default) to run, and whether reminder runs
     if args.only is None:

@@ -29,3 +29,21 @@ This repo contains the Limitless Stack — the operating protocol for Open Scaff
 - **Keep the SKILL.md under 500 lines.** If it's growing past that, move details into component READMEs and reference them.
 - **Update the version** in `skills/limitless-stack/SKILL.md` frontmatter, `plugin.json`, and `marketplace.json` together. They must stay in sync.
 - **Test changes against a real vault** before pushing. The protocol should work, not just read well.
+
+## Hub vault + LimitlessStack sync contract (added 2026-04-29)
+
+**This repo's `tools/` and `skills/` MUST always match the deployed copies in active vaults (the Hub vault at `/Users/matthewlavin/Claude code antigravity/obsidian` is the primary one) and `~/.claude/skills/`.** Drift in either direction is a hard failure of the protocol's "single source of truth" property.
+
+Background: Fixes sometimes get made in the Hub vault during active work (hot-fixing real bugs in the running system). Those fixes MUST be back-ported to this repo before session close — otherwise `install.sh` will deploy the OLD version to any new project, baking in bugs we've already fixed. Observed 2026-04-29: 174 lines of cmd_replace / routing / coverage fixes lived in the Hub vault for a session before the gap was noticed.
+
+**Mechanical enforcement lives in `tools/limitless-preflight.sh`** — the "Limitless Stack canonical sync" check diffs every active vault's `tools/` and `~/.claude/skills/` against this repo's `tools/` and `skills/`. Any drift fires a ⚠ on the next session's Roll Call with the exact `cp` command. The check uses `$LIMITLESS_STACK_HOME` (default `/Users/matthewlavin/LimitlessStack` — i.e., this repo's local clone path).
+
+**When you edit anything in this repo's `tools/` or `skills/`:**
+1. Mirror the same change to the Hub vault's `tools/` (and `~/.claude/skills/<skill>/SKILL.md` for skills)
+2. Run the Hub vault's `tools/limitless-preflight.sh` — the sync check should pass
+3. Commit + push BOTH repos in the same logical change (separate commits OK, but in the same session)
+
+**When you edit anything in the Hub vault's `tools/`:**
+Same in reverse — back-port to this repo's `tools/`, run preflight, commit + push both.
+
+See [[synthesis/claude-anti-patterns]] in the Hub vault wiki, entry #14, for the anti-pattern this contract prevents.

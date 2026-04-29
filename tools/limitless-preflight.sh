@@ -167,6 +167,59 @@ else
 fi
 echo ""
 
+# ── Limitless Stack canonical sync ──────────────────────
+# Hub vault's tools/ and ~/.claude/skills/ MUST match the LimitlessStack
+# canonical at $LIMITLESS_STACK_HOME (default /Users/matthewlavin/LimitlessStack).
+# Closes the failure mode where fixes accumulate in one place but never make it
+# back to the other — observed 2026-04-29 when 174 lines of cmd_replace/
+# routing/coverage fixes lived in the Hub vault for a session before the gap
+# was caught. The contract is: any future drift here fails the next session's
+# Roll Call, with a one-line cp command in the warning so it can't go unfixed.
+echo "[meta] Limitless Stack canonical sync"
+LIMITLESS_STACK_HOME="${LIMITLESS_STACK_HOME:-/Users/matthewlavin/LimitlessStack}"
+if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
+  tools_clean=true
+  for f in limitless-preflight.sh notebooklm-wiki-refresh.py notebooklm-dedupe.py session-bootstrap.sh; do
+    canon="$LIMITLESS_STACK_HOME/tools/$f"
+    local_f="$VAULT/tools/$f"
+    [ -f "$canon" ] || continue
+    [ -f "$local_f" ] || continue
+    if ! diff -q "$canon" "$local_f" >/dev/null 2>&1; then
+      tools_clean=false
+      warn "tools/$f drifted from LimitlessStack canonical" \
+           "diff \"$VAULT/tools/$f\" \"$LIMITLESS_STACK_HOME/tools/$f\"  — then cp the newer one over the older"
+    fi
+  done
+  if $tools_clean; then
+    ok "tools/ in sync with LimitlessStack canonical ($LIMITLESS_STACK_HOME)"
+  fi
+
+  skills_clean=true
+  for s in limitless-stack roll-call notebooklm four-tool-lookup verify-before-claim karpathy-guidelines; do
+    canon="$LIMITLESS_STACK_HOME/skills/$s/SKILL.md"
+    installed="$HOME/.claude/skills/$s/SKILL.md"
+    [ -f "$canon" ] || continue
+    if [ ! -f "$installed" ]; then
+      skills_clean=false
+      warn "skill '$s' missing from ~/.claude/skills/" \
+           "mkdir -p ~/.claude/skills/$s && cp $LIMITLESS_STACK_HOME/skills/$s/SKILL.md ~/.claude/skills/$s/SKILL.md"
+      continue
+    fi
+    if ! diff -q "$canon" "$installed" >/dev/null 2>&1; then
+      skills_clean=false
+      warn "skill '$s' drifted from LimitlessStack canonical" \
+           "cp $LIMITLESS_STACK_HOME/skills/$s/SKILL.md ~/.claude/skills/$s/SKILL.md  (or rerun install.sh)"
+    fi
+  done
+  if $skills_clean; then
+    ok "skills in sync with LimitlessStack canonical"
+  fi
+else
+  warn "LIMITLESS_STACK_HOME ($LIMITLESS_STACK_HOME) not present — can't verify Limitless Stack sync" \
+       "git clone https://github.com/Open-Scaffold-Labs/LimitlessStack.git \$HOME/LimitlessStack  (or set LIMITLESS_STACK_HOME)"
+fi
+echo ""
+
 # ── [4/7] Pinecone ──────────────────────────────────────
 echo "[4/7] Pinecone (semantic memory)"
 begin_tool "pinecone" "Pinecone" "Memory"
@@ -265,13 +318,34 @@ else
     warn "auth check output unparseable" "notebooklm auth check --test · invoke Skill(notebooklm) if unclear"
   fi
 
+  # Notebook coverage — every notebook in NotebookLM must be in NOTEBOOK_ROUTES,
+  # DEFAULT_ROUTE, REMINDER_NOTEBOOK_ID, or IGNORED_NOTEBOOKS. Catches the
+  # "TheMatch silently unrouted" failure mode (2026-04-29). Single source of
+  # truth lives in tools/notebooklm-wiki-refresh.py — this check shells out to
+  # the --check-coverage flag rather than duplicating IDs in bash.
+  COVERAGE_OUT=$(python3.11 "$VAULT/tools/notebooklm-wiki-refresh.py" --check-coverage --skip-auth-check 2>&1)
+  COVERAGE_EXIT=$?
+  if [ "$COVERAGE_EXIT" -eq 0 ]; then
+    ok "notebook coverage: all NotebookLM notebooks routed or explicitly ignored"
+  elif [ "$COVERAGE_EXIT" -eq 1 ]; then
+    # Each line: "ID<TAB>title". Emit one warn per orphan so each gets its own fix command.
+    while IFS=$'\t' read -r orphan_id orphan_title; do
+      [ -z "$orphan_id" ] && continue
+      warn "notebook \"$orphan_title\" ($orphan_id) not in routing or ignore list" \
+           "add to NOTEBOOK_ROUTES or IGNORED_NOTEBOOKS in tools/notebooklm-wiki-refresh.py"
+    done <<< "$COVERAGE_OUT"
+  else
+    warn "notebook coverage check failed (exit=$COVERAGE_EXIT)" "$COVERAGE_OUT"
+  fi
+
   # Per-project notebook freshness — each routed file compared against its route's state file.
   # Keep this list in sync with NOTEBOOK_ROUTES in tools/notebooklm-wiki-refresh.py.
   for route in \
     "firehazmat:wiki/apps/firehazmat.md" \
     "openchiropractor:wiki/apps/openchiropractor.md" \
     "openfirehouse:wiki/apps/openfirehouse.md" \
-    "opensalon:wiki/apps/opensalon.md"; do
+    "opensalon:wiki/apps/opensalon.md" \
+    "the-match:wiki/apps/the-match.md"; do
     label="${route%%:*}"
     file="${route#*:}"
     state_path="$VAULT/tools/.notebooklm-${label}-state.json"
@@ -322,6 +396,7 @@ else
     ! -path "$VAULT/wiki/apps/openchiropractor.md" \
     ! -path "$VAULT/wiki/apps/openfirehouse.md" \
     ! -path "$VAULT/wiki/apps/opensalon.md" \
+    ! -path "$VAULT/wiki/apps/the-match.md" \
     ! -path "$VAULT/wiki/synthesis/hub-*.md" \
     ! -path "$VAULT/wiki/sources/firehazmat-*.md" \
     ! -path "$VAULT/wiki/sources/openchiropractor-*.md" \
@@ -414,7 +489,7 @@ except Exception:
     # Notebook id → state-label mapping for the suggested dedupe command.
     # Keep in sync with NOTEBOOK_ROUTES in tools/notebooklm-wiki-refresh.py
     # plus the reminder + default-wiki buckets.
-    notebooks="cdaa7a43:wiki ab4b7ccb:reminder f376f6e8:firehazmat 26a8db12:openchiropractor 9c8f3df0:openfirehouse 0a072ead:opensalon ca083f4f:hub"
+    notebooks="cdaa7a43:wiki ab4b7ccb:reminder f376f6e8:firehazmat 26a8db12:openchiropractor 9c8f3df0:openfirehouse 0a072ead:opensalon ca083f4f:hub e9337dea:the-match"
     sweep_total=0
     sweep_dirty=""
     sweep_skipped=0
@@ -450,9 +525,9 @@ except Exception:
       fi
     done
     if [ -z "$sweep_dirty" ] && [ "$sweep_skipped" -eq 0 ]; then
-      ok "notebooklm dedupe sweep: 0 duplicates across 7 notebooks"
+      ok "notebooklm dedupe sweep: 0 duplicates across 8 notebooks"
     elif [ -z "$sweep_dirty" ] && [ "$sweep_skipped" -gt 0 ]; then
-      ok "notebooklm dedupe sweep: 0 duplicates across $((7 - sweep_skipped))/7 notebooks ($sweep_skipped skipped)"
+      ok "notebooklm dedupe sweep: 0 duplicates across $((8 - sweep_skipped))/8 notebooks ($sweep_skipped skipped)"
     fi
     # If sweep_dirty is non-empty, individual warns above already covered it.
   fi
