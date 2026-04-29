@@ -121,6 +121,32 @@ else
   echo "  ✓ CLAUDE.md created"
 fi
 
+# ── 5b/6: .gitignore ────────────────────────────────────
+if [ ! -f "$TARGET/.gitignore" ]; then
+  cat > "$TARGET/.gitignore" <<'EOF'
+# Python (limitless-project.py imports create __pycache__)
+__pycache__/
+*.pyc
+*.pyo
+
+# Node
+node_modules/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# State files (keep them — they're project state, not local cache)
+# tools/.notebooklm-*-state.json should be tracked
+EOF
+  echo "  ✓ .gitignore (or merge with existing if you have project-specific entries)"
+fi
+
 # ── 6/6: Done — print next steps ────────────────────────
 echo "[6/6] Done. Next steps:"
 echo ""
