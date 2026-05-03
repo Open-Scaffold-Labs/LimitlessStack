@@ -267,28 +267,17 @@ If auth expires later, just re-run `notebooklm login` to refresh. No manual cook
 
 ---
 
-## Step 8 — Schedule the nightly sync
+## Step 8 — Wire sync into your end-of-session checklist
 
-If you're using Cowork with the `schedule` skill, ask Claude: "Schedule a task named `pinecone-nightly-sync` to run at 3:10 AM daily." Prompt content (self-contained so the scheduled run has full context):
+**Recommended: manual sync, triggered by edits.** Add `python3.11 tools/pinecone-sync.py --changed-only` to the end-of-session checklist in your vault's `CLAUDE.md`. Run it whenever wiki pages or raw sources changed. The Roll Call preflight (if you're using one) will warn on the next session if the vault has edits newer than the last sync, so drift surfaces fast.
 
-> Run an unattended nightly Pinecone --changed-only sync for the OpenScaffold vault.
->
-> Vault: `~/OpenScaffold-Vault/` (your actual path).
-> Pinecone API key: macOS Keychain, service `pinecone-api-key`.
-> Sync script: `<vault>/tools/pinecone-sync.py` (reads its own key).
->
-> Steps:
-> 1. `git pull` inside each subdir of `<vault>/raw/openscaffold-repos/*/`. Tolerate per-repo failures.
-> 2. `cd <vault> && python3.11 tools/pinecone-sync.py --changed-only`
-> 3. If files synced > 0, append `## [YYYY-MM-DD] schema | nightly Pinecone sync — <files> files / <chunks> chunks` to `<vault>/wiki/log.md`.
-> 4. Report new commits per repo, sync count, and any errors.
->
-> Do not push commits. Do not modify raw/. Log-line append is the only write.
+**Why manual instead of a nightly cron?** We tried `pinecone-nightly-sync` as a Cowork scheduled task at 3:10 AM (2026-04-14 to 2026-05-03) and retired it. The failure mode was Mac sleep cycles: a closed-laptop overnight = silent missed run = no error, just a stale index next time you went looking. Manual-on-edit is more reliable because the trigger is the actual change, not the wall clock.
 
-If you're not on Cowork, use `crontab -e`:
+**If you do want unattended sync** (e.g., on a server that's always on, not a laptop), `crontab -e`:
 ```
-10 3 * * * cd ~/OpenScaffold-Vault && python3.11 tools/pinecone-sync.py --changed-only >> /tmp/pinecone-nightly.log 2>&1
+10 3 * * * cd ~/OpenScaffold-Vault && python3.11 tools/pinecone-sync.py --changed-only >> /tmp/pinecone-sync.log 2>&1
 ```
+Pair it with a healthcheck that pages you if the log hasn't grown in N days — otherwise you'll learn about silent failures the same way we did.
 
 ---
 
@@ -617,7 +606,7 @@ Your setup is working when all four are true:
 1. **Obsidian** opens the vault and the graph view shows `CLAUDE.md` linked to `wiki/` content.
 2. **Pinecone** `python3.11 tools/pinecone-search.py "any question about your code"` returns results with file paths.
 3. **NotebookLM** has at least one topic notebook with your architecture docs as sources, and you can query it via Claude in Chrome.
-4. **A nightly scheduled task** is running `pinecone-sync.py --changed-only` and appending to the log.
+4. **The end-of-session checklist** runs `pinecone-sync.py --changed-only` whenever wiki/raw changed, and a Roll Call preflight (or equivalent) warns on the next session if the vault has unsynced edits. (A nightly cron is *not* recommended for laptops — see Step 8.)
 
 At that point, any new Claude session can read `CLAUDE.md`, browse the wiki, search Pinecone, and query NotebookLM — and answer OpenScaffold questions with citations backed by your actual code and docs.
 

@@ -363,7 +363,7 @@ If the session touched the Hub repo, an app repo, or the LimitlessStack repo its
 
 ### 4. Sync Pinecone
 
-Run `python3.11 tools/pinecone-sync.py --changed-only` if wiki pages or raw sources were added/changed (or confirm the nightly cron will pick it up). Skip this step temporarily if the index is over its monthly cap and the sync is bailing on 429s — but document the pause and ask before re-enabling.
+Run `python3.11 tools/pinecone-sync.py --changed-only` if wiki pages or raw sources were added/changed. **Manual sync is the canonical path** — a nightly Cowork cron was tried 2026-04-14 → 2026-05-03 and retired (Mac sleep cycles caused silent missed-run drift). The Roll Call preflight's "wiki edits newer than last Pinecone sync" warning is the trigger. Skip this step temporarily if the index is over its monthly cap and the sync is bailing on 429s — but document the pause and ask before re-running.
 
 ### 5. Refresh NotebookLM
 
