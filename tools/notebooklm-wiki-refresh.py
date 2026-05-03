@@ -91,6 +91,20 @@ EXCLUDE_FROM_NOTEBOOKS = [
     "wiki/sources/openchiropractor-",
     "wiki/sources/openfirehouse-",
     "wiki/sources/opensalon-",
+    # Pruned from cdaa7a43 on 2026-05-03 to free slots under the 50-source
+    # Standard-tier cap. Wiki files preserved (50+ inbound backlinks); they
+    # just stop occupying NotebookLM slots. The dated snapshots are
+    # superseded by current pages; erg-2024.md is FireHazmat-specific
+    # and belongs in f376f6e8 (firehazmat) only.
+    "wiki/sources/agentic-company-blueprint-2026-04-14.md",
+    "wiki/sources/claude-code-karpathy-obsidian-video-2026-04-14.md",
+    "wiki/synthesis/lint-2026-04-14.md",
+    "wiki/sources/open-scaffold-docs-readme-2026-04-14.md",
+    "wiki/sources/openscaffold-core-claude-md-2026-04-14.md",
+    "wiki/sources/openscaffold-technical-architecture-v2-2026-04-14.md",
+    "wiki/sources/paperclip-recommendation-memo-2026-04-06.md",
+    "wiki/sources/paperclip-screenshots-memo-2026-04-07.md",
+    "wiki/concepts/erg-2024.md",
 ]
 
 
