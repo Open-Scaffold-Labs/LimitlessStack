@@ -670,10 +670,32 @@ if [ -r "$ANTIPATTERNS_FILE" ]; then
   if [ "$AP_COUNT" -gt 0 ]; then
     AP_TS=$(stat -f '%m' "$ANTIPATTERNS_FILE" 2>/dev/null || echo 0)
     AP_AGE_DAYS=$(( (NOW_TS - AP_TS) / 86400 ))
-    if [ "$AP_AGE_DAYS" -le 7 ]; then
-      warn "anti-patterns file edited ${AP_AGE_DAYS}d ago — review recent additions before substantive work" "read $ANTIPATTERNS_FILE or query notebook ab4b7ccb"
-    else
+    # Tuned 2026-05-03: "reviewed before substantive work" really means
+    # "the reminder bucket Claude queries at session start has the latest
+    # version". If the reminder layer's verified_at for this file is
+    # newer than the file's mtime, the curated layer is current and the
+    # warn is noise. Only warn if the file changed AND the reminder
+    # bucket hasn't been re-verified since.
+    AP_REL="wiki/synthesis/claude-anti-patterns.md"
+    AP_VERIFIED_AT=0
+    if [ -f "$REMINDER_STATE" ]; then
+      AP_VERIFIED_AT=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    v = d.get(sys.argv[2], {}).get('verified_at')
+    print(int(v) if v else 0)
+except Exception:
+    print(0)
+" "$REMINDER_STATE" "$AP_REL" 2>/dev/null)
+      AP_VERIFIED_AT=${AP_VERIFIED_AT:-0}
+    fi
+    if [ "$AP_AGE_DAYS" -gt 7 ]; then
       ok "$AP_COUNT anti-patterns on file (last edit ${AP_AGE_DAYS}d ago)"
+    elif [ "$AP_VERIFIED_AT" -ge "$AP_TS" ]; then
+      ok "$AP_COUNT anti-patterns on file (edited ${AP_AGE_DAYS}d ago, reminder bucket re-verified after edit)"
+    else
+      warn "anti-patterns file edited ${AP_AGE_DAYS}d ago and reminder bucket not re-verified since — review before substantive work" "read $ANTIPATTERNS_FILE or run python3.11 tools/notebooklm-wiki-refresh.py --only reminder"
     fi
     echo ""
     echo "  Active anti-patterns (titles only — full text: wiki/synthesis/claude-anti-patterns.md):"
