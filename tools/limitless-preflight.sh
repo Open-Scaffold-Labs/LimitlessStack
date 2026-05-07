@@ -652,14 +652,18 @@ except Exception:
       fi
     done
 
+    # Use the manifest's reminder notebook ID short-prefix for the label,
+    # falling back to "ab4b7ccb" for backwards-compat (Hub vault has no manifest).
+    _REMINDER_LABEL="${LIMITLESS_REMINDER_NB_ID:0:8}"
+    [ -z "$_REMINDER_LABEL" ] && _REMINDER_LABEL="ab4b7ccb"
     if [ "$AB_STALE" -gt 0 ] && [ "$AB_UNVERIFIED" -gt 0 ]; then
-      bad "ab4b7ccb reminder notebook: $AB_STALE source(s) edited since last verify + $AB_UNVERIFIED never verified" "python3.11 tools/notebooklm-wiki-refresh.py --force --only reminder  (then --verify-existing)"
+      bad "$_REMINDER_LABEL reminder notebook: $AB_STALE source(s) edited since last verify + $AB_UNVERIFIED never verified" "python3.11 tools/notebooklm-wiki-refresh.py --force --only reminder  (then --verify-existing)"
     elif [ "$AB_STALE" -gt 0 ]; then
-      warn "ab4b7ccb reminder notebook: $AB_STALE source(s) edited since last verified upload" "python3.11 tools/notebooklm-wiki-refresh.py --force --only reminder"
+      warn "$_REMINDER_LABEL reminder notebook: $AB_STALE source(s) edited since last verified upload" "python3.11 tools/notebooklm-wiki-refresh.py --force --only reminder"
     elif [ "$AB_UNVERIFIED" -gt 0 ]; then
-      warn "ab4b7ccb reminder notebook: $AB_UNVERIFIED source(s) have no verified_at timestamp" "python3.11 tools/notebooklm-wiki-refresh.py --verify-existing --only reminder"
+      warn "$_REMINDER_LABEL reminder notebook: $AB_UNVERIFIED source(s) have no verified_at timestamp" "python3.11 tools/notebooklm-wiki-refresh.py --verify-existing --only reminder"
     else
-      ok "ab4b7ccb reminder notebook sources content-verified"
+      ok "$_REMINDER_LABEL reminder notebook sources content-verified"
     fi
   else
     warn "no reminder-notebook state file" "python3.11 tools/notebooklm-wiki-refresh.py --seed --only reminder"
