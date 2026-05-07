@@ -245,6 +245,89 @@ if [ -d "$VAULT/.git" ]; then
 else
   warn "vault is not a git repo" "check vault location; end-of-session commit/push won't work"
 fi
+
+# ── Wiki content freshness (semantic) ───────────────────
+# These three checks look at CONTENT of wiki files (not just presence /
+# timestamps), specifically for drift modes that mechanical checks miss:
+#   1. Pages exist in wiki/ but aren't listed in wiki/index.md (catalog drift)
+#   2. Pages contain literal template placeholders (overview.md never filled in)
+#   3. TODO files have explicit deadlines that have passed (overdue items)
+# Added 2026-05-07 after a session discovered HIGH-PRIORITY-TODO.md sat
+# 3 days overdue + the-match CLAUDE.md feature table was 1 week stale
+# without any preflight check noticing. See claude-anti-patterns.md
+# entry "Mechanical checks without semantic checks". Attributed to the
+# obsidian tool (no new begin_tool call) since these are wiki-health.
+if [ -r "$VAULT/wiki/index.md" ]; then
+  # Check 1: index completeness — every wiki/*.md (except index.md) should
+  # appear by basename or relative-path in wiki/index.md.
+  MISSING_FROM_INDEX=()
+  while IFS= read -r page; do
+    [ "$page" = "$VAULT/wiki/index.md" ] && continue
+    REL="${page#$VAULT/wiki/}"
+    BASE="${REL%.md}"
+    # grep -F for literal string match; check both basename + relative path
+    if ! grep -qF "$BASE" "$VAULT/wiki/index.md" 2>/dev/null; then
+      MISSING_FROM_INDEX+=("$REL")
+    fi
+  done < <(find "$VAULT/wiki" -name '*.md' -type f 2>/dev/null)
+  if [ ${#MISSING_FROM_INDEX[@]} -eq 0 ]; then
+    ok "index.md catalog complete (every wiki/*.md is listed)"
+  else
+    warn "${#MISSING_FROM_INDEX[@]} wiki page(s) not listed in wiki/index.md: ${MISSING_FROM_INDEX[*]}" "edit wiki/index.md to add them, or document why they're excluded"
+  fi
+
+  # Check 2: template-placeholder detection — frontmatter dates literally set
+  # to YYYY-MM-DD mean the page was scaffolded by limitless-stack-init and
+  # never filled in.
+  PLACEHOLDERS=()
+  while IFS= read -r page; do
+    if head -10 "$page" 2>/dev/null | grep -qE "^(created|updated): YYYY-MM-DD"; then
+      PLACEHOLDERS+=("$(basename "$page")")
+    fi
+  done < <(find "$VAULT/wiki" -name '*.md' -type f 2>/dev/null)
+  if [ ${#PLACEHOLDERS[@]} -eq 0 ]; then
+    ok "no template-placeholder dates left in wiki"
+  else
+    warn "${#PLACEHOLDERS[@]} wiki page(s) still have YYYY-MM-DD placeholder frontmatter: ${PLACEHOLDERS[*]}" "fill in the page content + real dates, or delete the page"
+  fi
+
+  # Check 3: overdue TODO detection — two passes:
+  #   3a. wiki/*TODO*.md with `priority: critical` frontmatter older than 3 days
+  #   3b. any wiki/*TODO*.md with explicit "DO AFTER YYYY-MM-DD" past today
+  # Uses the global NOW_TS set at the top of the script.
+  OVERDUE=()
+  while IFS= read -r todofile; do
+    NAME=$(basename "$todofile")
+    # 3a: critical-priority age check
+    if head -10 "$todofile" 2>/dev/null | grep -qE "^priority:[[:space:]]*critical"; then
+      CREATED=$(head -10 "$todofile" 2>/dev/null | grep -E "^created:" | head -1 | sed -E 's/^created:[[:space:]]*//' | tr -d ' ')
+      if [ -n "$CREATED" ] && echo "$CREATED" | grep -qE "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"; then
+        CREATED_TS=$(date -j -f "%Y-%m-%d" "$CREATED" +%s 2>/dev/null || echo 0)
+        if [ "$CREATED_TS" -gt 0 ]; then
+          AGE_DAYS=$(( (NOW_TS - CREATED_TS) / 86400 ))
+          if [ "$AGE_DAYS" -gt 3 ]; then
+            OVERDUE+=("$NAME (priority:critical, ${AGE_DAYS}d old since $CREATED)")
+            continue  # one finding per file
+          fi
+        fi
+      fi
+    fi
+    # 3b: explicit "DO AFTER YYYY-MM-DD" past today
+    DEADLINE=$(grep -oE 'DO AFTER [0-9]{4}-[0-9]{2}-[0-9]{2}|by [0-9]{4}-[0-9]{2}-[0-9]{2}|before [0-9]{4}-[0-9]{2}-[0-9]{2}' "$todofile" 2>/dev/null | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1)
+    if [ -n "$DEADLINE" ]; then
+      DEADLINE_TS=$(date -j -f "%Y-%m-%d" "$DEADLINE" +%s 2>/dev/null || echo 0)
+      if [ "$DEADLINE_TS" -gt 0 ] && [ "$DEADLINE_TS" -lt "$NOW_TS" ]; then
+        DAYS_OVERDUE=$(( (NOW_TS - DEADLINE_TS) / 86400 ))
+        OVERDUE+=("$NAME (${DAYS_OVERDUE}d past explicit deadline $DEADLINE)")
+      fi
+    fi
+  done < <(find "$VAULT/wiki" -iname '*TODO*.md' -type f 2>/dev/null)
+  if [ ${#OVERDUE[@]} -eq 0 ]; then
+    ok "no overdue TODO items detected"
+  else
+    warn "${#OVERDUE[@]} TODO file(s) overdue: ${OVERDUE[*]}" "address the items, then update or delete the file"
+  fi
+fi
 echo ""
 
 # ── Limitless Stack canonical sync ──────────────────────
