@@ -23,6 +23,7 @@ cd "$VAULT" || { echo "ERROR: cannot cd to vault $VAULT"; exit 2; }
 # greenfield apps) declare its own subset of the seven-tool stack.
 # Backwards-compat: no manifest → all checks run (Hub-vault behavior).
 LIMITLESS_PROJECT_ID="hub"  # default
+LIMITLESS_HAS_MANIFEST=false
 LIMITLESS_CHECKS=""
 LIMITLESS_DESCRIPTION=""
 LIMITLESS_PROJECT_ROUTES=""        # space-separated "label:filepath" pairs from manifest NOTEBOOKLM.routes
@@ -34,6 +35,7 @@ LIMITLESS_REMINDER_NB_ID=""
 LIMITLESS_OBSIDIAN_MIN_PAGES="10"  # default; manifest's OBSIDIAN.expected_min_pages overrides
 
 if [ -f "$VAULT/.limitless-project.py" ]; then
+  LIMITLESS_HAS_MANIFEST=true
   LIMITLESS_MANIFEST_RAW=$(python3.11 -c "
 import importlib.util, sys
 try:
@@ -84,8 +86,11 @@ fi
 # Use as: `if check_enabled <name>; then ... fi`
 check_enabled() {
   local name="$1"
-  # No manifest → all checks enabled (Hub-vault backwards-compat)
-  [ -z "$LIMITLESS_CHECKS" ] && return 0
+  # No manifest at all → all checks enabled (Hub-vault backwards-compat).
+  # Manifest with empty CHECKS list → no optional checks enabled (explicit
+  # opt-out); the empty-string LIMITLESS_CHECKS no longer collides with
+  # the no-manifest case thanks to LIMITLESS_HAS_MANIFEST.
+  [ "$LIMITLESS_HAS_MANIFEST" = "false" ] && return 0
   echo " $LIMITLESS_CHECKS " | grep -q " $name "
 }
 
@@ -301,11 +306,13 @@ echo ""
 
 # ── [4/7] Pinecone ──────────────────────────────────────
 echo "[4/7] Pinecone (semantic memory)"
-begin_tool "pinecone" "Pinecone" "Memory"
-PINECONE_API_KEY_VAL="$(security find-generic-password -s pinecone-api-key -w 2>/dev/null || true)"
-if [ -z "$PINECONE_API_KEY_VAL" ]; then
+if ! check_enabled "pinecone"; then
+  echo "  ⊘ not enabled in this project's manifest (.limitless-project.py CHECKS) — skipping"
+elif PINECONE_API_KEY_VAL="$(security find-generic-password -s pinecone-api-key -w 2>/dev/null || true)"; [ -z "$PINECONE_API_KEY_VAL" ]; then
+  begin_tool "pinecone" "Pinecone" "Memory"
   bad "no Pinecone API key in Keychain" "security add-generic-password -s pinecone-api-key -a matt -w <key>"
 else
+  begin_tool "pinecone" "Pinecone" "Memory"
   PINECONE_STATS=$(PINECONE_API_KEY="$PINECONE_API_KEY_VAL" python3.11 -c "
 import os, sys, json
 try:
