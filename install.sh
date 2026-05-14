@@ -60,7 +60,7 @@ fi
 # --- 3. Skills ---
 echo "[3/8] Installing skills to ~/.claude/skills/..."
 SKILLS_DIR="$HOME/.claude/skills"
-for skill in limitless-stack notebooklm four-tool-lookup roll-call verify-before-claim karpathy-guidelines; do
+for skill in limitless-stack notebooklm four-tool-lookup roll-call verify-before-claim karpathy-guidelines audit-before-claim; do
   mkdir -p "$SKILLS_DIR/$skill"
   cp "$SCRIPT_DIR/skills/$skill/SKILL.md" "$SKILLS_DIR/$skill/SKILL.md"
   echo "  ✓ $skill skill installed"
