@@ -836,6 +836,46 @@ print(json.dumps({"verdict": verdict, "tools": tools, "reported_by": reported_by
       -d "$STACK_PAYLOAD" \
       "$HUB_URL" > /dev/null 2>&1 || true
   fi
+
+  # Also report this preflight run as an activity row (canary producer for the
+  # /api/agent-activity endpoint). Shares the same Keychain token as the stack
+  # health POST above; same best-effort semantics — failures must not affect
+  # the Roll Call verdict. See tools/report-activity.sh for details.
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ -x "$SCRIPT_DIR/report-activity.sh" ]; then
+    if [ "$RED" -gt 0 ]; then
+      ACT_VERDICT="block"
+      ACT_TITLE="preflight BLOCK — $RED blocker(s)"
+    elif [ "$YELLOW" -gt 0 ]; then
+      ACT_VERDICT="warn"
+      ACT_TITLE="preflight WARN — $YELLOW drift finding(s)"
+    else
+      ACT_VERDICT="ready"
+      ACT_TITLE="preflight READY — $GREEN green"
+    fi
+    ACT_PAYLOAD=$(python3 -c '
+import json, sys
+print(json.dumps({
+  "verdict": sys.argv[1],
+  "green":   int(sys.argv[2]),
+  "yellow":  int(sys.argv[3]),
+  "red":     int(sys.argv[4]),
+  "warnings": [w for w in sys.argv[5].split("\x1f") if w],
+  "blockers": [b for b in sys.argv[6].split("\x1f") if b],
+  "reported_by": sys.argv[7],
+}))
+' "$ACT_VERDICT" "$GREEN" "$YELLOW" "$RED" \
+   "$(IFS=$'\x1f'; echo "${WARNINGS[*]}")" \
+   "$(IFS=$'\x1f'; echo "${BLOCKERS[*]}")" \
+   "$(whoami)@$(hostname -s 2>/dev/null || echo unknown)")
+    "$SCRIPT_DIR/report-activity.sh" \
+      --source     agent \
+      --event-type preflight \
+      --actor      roll-call \
+      --repo       openscaffold-wiki \
+      --title      "$ACT_TITLE" \
+      --payload    "$ACT_PAYLOAD" || true
+  fi
 fi
 
 # ── USAGE REMINDERS ─────────────────────────────────────
