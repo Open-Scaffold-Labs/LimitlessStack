@@ -227,9 +227,33 @@ def scan_hostloop_skills() -> list[dict]:
     return out
 
 
+# ── Identity helpers ────────────────────────────────────────────────────────
+def detect_github_user() -> str:
+    """Return the running user's GitHub login (e.g. 'mlav1114', 'draaen-jpg').
+    Prefers `gh api user --jq .login` so Matt and Dale each get tagged with
+    their actual GitHub identity. Falls back to $LSH_USER env var, then
+    macOS whoami, then 'unknown'. Used to tag inventory rows so the Hub's
+    /api/workspace/.../capabilities endpoint can return each user's own
+    snapshot instead of whichever Mac scanned last. """
+    try:
+        r = subprocess.run(["gh", "api", "user", "--jq", ".login"],
+                           capture_output=True, text=True, timeout=5)
+        login = r.stdout.strip()
+        if login and r.returncode == 0:
+            return login
+    except Exception:
+        pass
+    env = os.environ.get("LSH_USER")
+    if env:
+        return env
+    return os.environ.get("USER", "unknown")
+
+
 # ── Activity reporter ───────────────────────────────────────────────────────
-def report(payload: dict, title: str) -> None:
-    """Best-effort POST via tools/report-activity.sh."""
+def report(payload: dict, title: str, gh_user: str) -> None:
+    """Best-effort POST via tools/report-activity.sh. Actor encodes the
+    scanner identity + the GitHub user, so the endpoint can filter to
+    per-user snapshots."""
     helper = Path(__file__).resolve().parent / "report-activity.sh"
     if not helper.exists():
         return
@@ -238,7 +262,7 @@ def report(payload: dict, title: str) -> None:
             [str(helper),
              "--source",     "inventory",
              "--event-type", "capability_snapshot",
-             "--actor",      "scan-capabilities",
+             "--actor",      f"scan-capabilities/{gh_user}",
              "--repo",       "openscaffold-wiki",
              "--title",      title,
              "--payload",    json.dumps(payload)],
@@ -294,8 +318,18 @@ def main():
             }
     connectors_dedup = sorted(conn_by_name.values(), key=lambda c: c["name"])
 
+    # Identify the scanner so the Hub can serve per-user snapshots.
+    gh_user = detect_github_user()
+    try:
+        import socket
+        host = socket.gethostname()
+    except Exception:
+        host = "unknown"
+
     payload = {
         "scan_at":       time.time(),
+        "scanned_by":    gh_user,
+        "host":          host,
         "skills_by_tile": skills_by_tile,
         "tile_meta":     TILES,
         "tile_counts":   {t["id"]: len(skills_by_tile[t["id"]]) for t in TILES if t["id"] != "connectors"},
@@ -314,7 +348,7 @@ def main():
     payload["tile_counts"]["connectors"] = len(connectors_dedup)
 
     # Stdout summary
-    print(f"=== capability snapshot @ {time.strftime('%Y-%m-%d %H:%M:%S')} ===")
+    print(f"=== capability snapshot @ {time.strftime('%Y-%m-%d %H:%M:%S')} (scanned_by={gh_user}, host={host}) ===")
     for tile in TILES:
         if tile["id"] == "connectors":
             count = len(connectors_dedup)
@@ -325,7 +359,7 @@ def main():
 
     title = (f"capabilities — {len(all_skills)} skills · "
              f"{len(connectors_dedup)} connectors across {len(TILES)-1} groups")
-    report(payload, title)
+    report(payload, title, gh_user)
 
 
 if __name__ == "__main__":
