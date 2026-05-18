@@ -865,8 +865,8 @@ print(json.dumps({
   "reported_by": sys.argv[7],
 }))
 ' "$ACT_VERDICT" "$GREEN" "$YELLOW" "$RED" \
-   "$(IFS=$'\x1f'; echo "${WARNINGS[*]}")" \
-   "$(IFS=$'\x1f'; echo "${BLOCKERS[*]}")" \
+   "$(IFS=$'\x1f'; echo "${WARNINGS[*]:-}")" \
+   "$(IFS=$'\x1f'; echo "${BLOCKERS[*]:-}")" \
    "$(whoami)@$(hostname -s 2>/dev/null || echo unknown)")
     "$SCRIPT_DIR/report-activity.sh" \
       --source     agent \
