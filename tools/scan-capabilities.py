@@ -229,7 +229,7 @@ def scan_hostloop_skills() -> list[dict]:
 
 # ── Identity helpers ────────────────────────────────────────────────────────
 def detect_github_user() -> str:
-    """Return the running user's GitHub login (e.g. 'mlav1114', 'draaen-jpg').
+    """Return the running user's GitHub login (e.g. 'mlav1114', 'draaen-osl').
     Prefers `gh api user --jq .login` so Matt and Dale each get tagged with
     their actual GitHub identity. Falls back to $LSH_USER env var, then
     macOS whoami, then 'unknown'. Used to tag inventory rows so the Hub's
