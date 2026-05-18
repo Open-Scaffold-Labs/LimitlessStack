@@ -878,6 +878,22 @@ print(json.dumps({
   fi
 fi
 
+# ── Per-user capability snapshot ────────────────────────
+# Run scan-capabilities.py best-effort so every Roll Call refreshes the
+# CURRENT MAC'S snapshot in the Hub. Each user gets tagged with their own
+# GitHub login (via gh CLI inside scan-capabilities.py), so Dale's Hub view
+# starts showing HIS plugin set the moment he greets Claude and Roll Call
+# fires — no manual setup on his side. Failure here can't affect the
+# Roll Call verdict — same best-effort contract as the activity POST above.
+SCANNER="$SCRIPT_DIR/scan-capabilities.py"
+if [ -x "$SCANNER" ] || [ -r "$SCANNER" ]; then
+  if command -v python3.11 >/dev/null 2>&1; then
+    python3.11 "$SCANNER" > /dev/null 2>&1 || true
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 "$SCANNER" > /dev/null 2>&1 || true
+  fi
+fi
+
 # ── USAGE REMINDERS ─────────────────────────────────────
 # Printed on every preflight run — binds each tool to the skill / routing
 # pattern that uses it correctly, so the rules travel with the output.
