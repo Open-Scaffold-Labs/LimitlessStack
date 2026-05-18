@@ -737,6 +737,38 @@ def sync_route(notebook_id: str, label: str, display: str, files: list[Path], dr
                f"dry_run: {dry_run}")
     print(summary)
 
+    # Report this route's sync to /api/agent-activity. Best-effort, skipped on
+    # dry-run (only meaningful runs become rows). One row per route so the
+    # feed reads as "firehazmat refreshed", "wiki bucket refreshed", etc.
+    if not dry_run and (added or refreshed or deleted or verify_failed or upload_failed):
+        try:
+            helper = Path(__file__).resolve().parent / "report-activity.sh"
+            if helper.exists():
+                title = (f"notebooklm {display} — "
+                         f"{added} added · {refreshed} refreshed · {deleted} deleted"
+                         + (f" · {verify_failed} verify_failed" if verify_failed else "")
+                         + (f" · {upload_failed} upload_failed" if upload_failed else ""))
+                payload = json.dumps({
+                    "route":         label,
+                    "notebook_id":   notebook_id,
+                    "added":         added, "refreshed": refreshed, "deleted": deleted,
+                    "unchanged":     unchanged,
+                    "verify_failed": verify_failed, "upload_failed": upload_failed,
+                    "force":         force,
+                })
+                subprocess.run(
+                    [str(helper),
+                     "--source",     "agent",
+                     "--event-type", "notebooklm_refresh",
+                     "--actor",      "notebooklm-refresh",
+                     "--repo",       "openscaffold-wiki",
+                     "--title",      title,
+                     "--payload",    payload],
+                    check=False, timeout=10,
+                )
+        except Exception:
+            pass  # logging is best-effort
+
 
 # ── Reminder notebook helpers ────────────────────────────────────────────
 def iter_reminder_files():
@@ -880,6 +912,36 @@ def sync_reminder(dry_run: bool, force: bool = False) -> None:
                f"verify_failed: {verify_failed}  upload_failed: {upload_failed}  "
                f"dry_run: {dry_run}")
     print(summary)
+
+    # Same activity-report pattern as sync_route, scoped to the reminder bucket.
+    if not dry_run and (added or refreshed or verify_failed or upload_failed):
+        try:
+            helper = Path(__file__).resolve().parent / "report-activity.sh"
+            if helper.exists():
+                title = (f"notebooklm reminder bucket — "
+                         f"{added} added · {refreshed} refreshed"
+                         + (f" · {verify_failed} verify_failed" if verify_failed else "")
+                         + (f" · {upload_failed} upload_failed" if upload_failed else ""))
+                payload = json.dumps({
+                    "route":           "reminder",
+                    "notebook_id":     REMINDER_NOTEBOOK_ID,
+                    "added":           added, "refreshed": refreshed,
+                    "unchanged":       unchanged, "missing_on_disk": missing_on_disk,
+                    "verify_failed":   verify_failed, "upload_failed": upload_failed,
+                    "force":           force,
+                })
+                subprocess.run(
+                    [str(helper),
+                     "--source",     "agent",
+                     "--event-type", "notebooklm_refresh",
+                     "--actor",      "notebooklm-refresh",
+                     "--repo",       "openscaffold-wiki",
+                     "--title",      title,
+                     "--payload",    payload],
+                    check=False, timeout=10,
+                )
+        except Exception:
+            pass
 
 
 # ── Notebook coverage check ──────────────────────────────────────────────
