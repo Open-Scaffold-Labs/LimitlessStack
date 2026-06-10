@@ -484,6 +484,13 @@ if ! command -v notebooklm >/dev/null 2>&1; then
   bad "notebooklm CLI not installed" "pip install \"notebooklm-py[browser]\" && playwright install chromium && notebooklm login"
 else
   AUTH_OUT=$(notebooklm auth check --test 2>&1)
+  # Transient token-fetch failures happen (observed 2026-06-10: BLOCK at 04:40,
+  # auth valid on the next check) — retry once before declaring a blocker.
+  # See anti-pattern #24.
+  if echo "$AUTH_OUT" | grep -q "fail"; then
+    sleep 5
+    AUTH_OUT=$(notebooklm auth check --test 2>&1)
+  fi
   if echo "$AUTH_OUT" | grep -q "Authentication Check" && ! echo "$AUTH_OUT" | grep -q "fail"; then
     ok "auth OK (storage_state.json valid, token fetch works)"
   elif echo "$AUTH_OUT" | grep -q "fail"; then

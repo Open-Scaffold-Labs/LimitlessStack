@@ -106,6 +106,15 @@ Roll Call's USAGE REMINDERS block exists because "the tool is reachable" is not 
 
 Drift in either column — stale sync OR drifting routing — is a problem. Roll Call surfaces both.
 
+## Deferred-blocker protocol (added 2026-06-10)
+
+When Roll Call returns WARN/BLOCK and Matt says "skip that" / proceeds anyway, the deferral is **one-time, not session-long**. See [[synthesis/claude-anti-patterns]] #24 (the NotebookLM "blocked all day while actually fine" incident).
+
+1. **Make the blocker visible immediately** — create a task (TaskCreate) for it so it cannot fall out of awareness mid-session.
+2. **Never re-assert the blocker from memory.** Before claiming the tool is still broken — in a status summary, a wrap-up, or an end-of-session step — re-run the relevant check (`notebooklm auth check --test`, the Pinecone probe, etc.). It's a 10-second command, and states recover: the 2026-06-10 NotebookLM BLOCK was transient, but Claude reported it broken for the whole session without re-checking.
+3. **Repairing a tool routes through that tool's owning skill.** Fixing NotebookLM auth IS a NotebookLM operation → invoke Skill(notebooklm) first and follow its runbook. Same for any tool with an owning skill.
+4. **Never silently skip end-of-session steps that depend on a deferred tool.** Re-check first; if genuinely still broken, list the skipped steps explicitly in the wrap-up so Matt sees exactly what didn't happen.
+
 ## Self-improvement rule (important)
 
 Roll Call is designed to **get better each session**. If during a session:
