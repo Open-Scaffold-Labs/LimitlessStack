@@ -49,6 +49,7 @@ NOTEBOOK_ROUTES = [
     ("wiki/apps/openchiropractor.md", "26a8db12-1543-4567-944d-c64a0d338acc", "openchiropractor", "openchiropractor"),
     ("wiki/apps/openfirehouse.md",    "9c8f3df0-5ebe-4523-85c2-dfdcf4e7dd02", "openfirehouse",    "openfirehouse"),
     ("wiki/apps/opensalon.md",        "0a072ead-e919-414a-80f7-27d5f1487afc", "opensalon",        "opensalon"),
+    ("wiki/synthesis/opensalon-",     "0a072ead-e919-414a-80f7-27d5f1487afc", "opensalon",        "opensalon"),
     ("wiki/apps/the-match.md",        "e9337dea-f7cd-4fba-aabc-621d15ecc336", "the-match",        "the-match"),
     ("wiki/synthesis/hub-",           "ca083f4f-afd8-438a-9da6-339dec7c87f8", "hub",              "hub"),
 ]
