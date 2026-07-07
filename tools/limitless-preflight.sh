@@ -519,6 +519,24 @@ else
     warn "notebook coverage check failed (exit=$COVERAGE_EXIT)" "$COVERAGE_OUT"
   fi
 
+  # Notebook capacity — warn BEFORE a routed notebook silently hits the
+  # 50-source Standard-tier cap. At the cap, `source add` fails with an
+  # opaque "Failed to get SOURCE_ID from registration response" error —
+  # hit on the-match's default bucket 2026-07-06 (50/50). Threshold: 47.
+  CAPS_OUT=$(python3.11 "$VAULT/tools/notebooklm-wiki-refresh.py" --check-caps --skip-auth-check 2>&1)
+  CAPS_EXIT=$?
+  if [ "$CAPS_EXIT" -eq 0 ]; then
+    ok "notebook capacity: all routed notebooks under the near-cap threshold (47/50)"
+  elif [ "$CAPS_EXIT" -eq 1 ]; then
+    while IFS=$'\t' read -r cap_id cap_label cap_count cap_cap; do
+      [ -z "$cap_id" ] && continue
+      warn "notebook '$cap_label' ($cap_id) at $cap_count/$cap_cap sources — adds fail at the cap" \
+           "consolidate or exclude sources (see the handoffs-rollup pattern, the-match 2026-07-06)"
+    done <<< "$CAPS_OUT"
+  else
+    warn "notebook capacity check failed (exit=$CAPS_EXIT)" "$CAPS_OUT"
+  fi
+
   # Per-project notebook freshness — each routed file compared against its route's state file.
   # Routes come from the project manifest's NOTEBOOKLM.routes list. Empty routes
   # (the-match, simple verticals) → loop runs 0 iterations.

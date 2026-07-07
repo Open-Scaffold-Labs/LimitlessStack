@@ -49,7 +49,6 @@ NOTEBOOK_ROUTES = [
     ("wiki/apps/openchiropractor.md", "26a8db12-1543-4567-944d-c64a0d338acc", "openchiropractor", "openchiropractor"),
     ("wiki/apps/openfirehouse.md",    "9c8f3df0-5ebe-4523-85c2-dfdcf4e7dd02", "openfirehouse",    "openfirehouse"),
     ("wiki/apps/opensalon.md",        "0a072ead-e919-414a-80f7-27d5f1487afc", "opensalon",        "opensalon"),
-    ("wiki/synthesis/opensalon-",     "0a072ead-e919-414a-80f7-27d5f1487afc", "opensalon",        "opensalon"),
     ("wiki/apps/the-match.md",        "e9337dea-f7cd-4fba-aabc-621d15ecc336", "the-match",        "the-match"),
     ("wiki/synthesis/hub-",           "ca083f4f-afd8-438a-9da6-339dec7c87f8", "hub",              "hub"),
 ]
@@ -991,6 +990,41 @@ def check_coverage() -> int:
     return len(orphans)
 
 
+def check_caps(threshold: int = 47, cap: int = 50) -> int:
+    """Warn when any routed notebook is near the per-notebook source cap.
+
+    Prints one 'nbid<TAB>label<TAB>count<TAB>cap' line per notebook whose
+    source count is >= `threshold`. Returns N warnings, or -1 on tool failure.
+    Added 2026-07-06 after the-match's default bucket silently reached 50/50
+    and every subsequent `source add` failed with the opaque "Failed to get
+    SOURCE_ID from registration response" error. The cap is invisible until
+    it bites; this makes it a preflight yellow at >= 47."""
+    targets = [(nbid, label) for _prefix, nbid, label, _display in NOTEBOOK_ROUTES]
+    targets.append((DEFAULT_ROUTE[0], DEFAULT_ROUTE[1]))
+    if REMINDER_NOTEBOOK_ID:
+        targets.append((REMINDER_NOTEBOOK_ID, "reminder"))
+    seen: set[str] = set()
+    warnings = 0
+    for nbid, label in targets:
+        if nbid in seen:
+            continue
+        seen.add(nbid)
+        r = run_nb(["source", "list", "--notebook", nbid, "--json"])
+        if r.returncode != 0:
+            print(f"source list failed for {label} ({nbid}): {r.stderr}", file=sys.stderr)
+            return -1
+        try:
+            data = json.loads(r.stdout)
+        except Exception as e:
+            print(f"source list JSON parse failed for {label}: {e}", file=sys.stderr)
+            return -1
+        sources = data if isinstance(data, list) else data.get("sources", [])
+        if len(sources) >= threshold:
+            print(f"{nbid}\t{label}\t{len(sources)}\t{cap}")
+            warnings += 1
+    return warnings
+
+
 # ── Main ─────────────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser(
@@ -1008,6 +1042,11 @@ def main():
                              "after a verify-function improvement to backfill verified_at "
                              "without paying for another full delete+re-add sync.")
     parser.add_argument("--skip-auth-check", action="store_true")
+    parser.add_argument("--check-caps", action="store_true",
+                        help="warn when a routed notebook is within 3 sources of the "
+                             "50-source cap. Print one 'ID<TAB>label<TAB>count<TAB>cap' "
+                             "line per near-full notebook. Exit 0 clean, 1 if warnings, "
+                             "2 on tool failure. Used by tools/limitless-preflight.sh.")
     parser.add_argument("--check-coverage", action="store_true",
                         help="compare NotebookLM's notebooks against routing + IGNORED_NOTEBOOKS. "
                              "Print orphans (one per line, ID<TAB>title) and exit. "
@@ -1028,6 +1067,13 @@ def main():
     # 0 = all notebooks routed/ignored, 1 = orphans found, 2 = tool failure.
     if args.check_coverage:
         n = check_coverage()
+        if n < 0:
+            sys.exit(2)
+        sys.exit(0 if n == 0 else 1)
+
+    # --check-caps: same exit semantics as --check-coverage.
+    if args.check_caps:
+        n = check_caps()
         if n < 0:
             sys.exit(2)
         sys.exit(0 if n == 0 else 1)
