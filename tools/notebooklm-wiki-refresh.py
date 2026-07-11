@@ -1014,7 +1014,15 @@ def check_caps(threshold: int = 47, cap: int = 50) -> int:
             print(f"source list failed for {label} ({nbid}): {r.stderr}", file=sys.stderr)
             return -1
         try:
-            data = json.loads(r.stdout)
+            # The CLI prints a "Matched: <full-id> (<title>)" preamble to stdout
+            # when given a short-prefix notebook id (e.g. the reminder's
+            # "ab4b7ccb") before emitting the JSON. Skip to the first JSON
+            # character so short ids parse the same as full UUIDs.
+            out = r.stdout
+            starts = [i for i in (out.find("{"), out.find("[")) if i != -1]
+            if not starts:
+                raise ValueError("no JSON object/array found in CLI output")
+            data = json.loads(out[min(starts):])
         except Exception as e:
             print(f"source list JSON parse failed for {label}: {e}", file=sys.stderr)
             return -1
