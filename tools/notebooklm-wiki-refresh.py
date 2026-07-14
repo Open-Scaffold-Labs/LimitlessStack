@@ -105,6 +105,16 @@ EXCLUDE_FROM_NOTEBOOKS = [
     "wiki/sources/paperclip-recommendation-memo-2026-04-06.md",
     "wiki/sources/paperclip-screenshots-memo-2026-04-07.md",
     "wiki/concepts/erg-2024.md",
+    # Pruned from cdaa7a43 on 2026-07-13, same reason: the 50-source cap was full and
+    # two NEW handoffs (accountability + prevention-offline) could not be added. A session
+    # handoff's purpose EXPIRES the moment the next session starts — these three are a
+    # month old and are superseded by wiki/apps/openfirehouse.md + wiki/log.md. The files
+    # stay on disk and in git (backlinks intact); they just stop occupying NotebookLM slots.
+    # NOTE: handoffs-rollup.md in that notebook is from the the-match vault and does NOT
+    # cover these — checked before pruning, so this is a deliberate drop, not a rollup.
+    "wiki/synthesis/session-handoff-2026-06-13.md",
+    "wiki/synthesis/session-handoff-2026-06-14.md",
+    "wiki/synthesis/session-handoff-2026-06-15.md",
 ]
 
 
