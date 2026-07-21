@@ -763,10 +763,56 @@ begin_tool "antigravity" "Antigravity" "IDE"
 skip "not session-critical for Cowork agents; Matt's local IDE"
 echo ""
 
+# ── [6b] Hermes (agent runtime) ─────────────────────────
+# Added 2026-07-21 (spec F-8): the Hub Workspace's persistent agent on Fly.
+# /health is unauthenticated; /health/detailed (disk, gateway, model checks)
+# needs the API_SERVER_KEY from the macOS Keychain. A suspended machine
+# cold-wakes on the first request — that's expected, not a failure.
+echo "[6b] Hermes (agent runtime — Hub Workspace)"
+begin_tool "hermes" "Hermes" "Agent runtime"
+HERMES_URL="${HERMES_HEALTH_URL:-https://openscaffold-hermes.fly.dev}"
+HERMES_HEALTH=$(curl -s -m 30 "$HERMES_URL/health" 2>/dev/null)
+if echo "$HERMES_HEALTH" | grep -q '"status": *"ok"'; then
+  HERMES_VER=$(echo "$HERMES_HEALTH" | sed -n 's/.*"version": *"\([^"]*\)".*/\1/p')
+  ok "hermes gateway healthy (v${HERMES_VER:-?}) at $HERMES_URL"
+  HERMES_KEY=$(security find-generic-password -s hermes-api-server-key-2026-07-20 -w 2>/dev/null)
+  if [ -n "$HERMES_KEY" ]; then
+    HERMES_DET=$(curl -s -m 30 -H "Authorization: Bearer $HERMES_KEY" "$HERMES_URL/health/detailed" 2>/dev/null)
+    HERMES_DISK=$(echo "$HERMES_DET" | sed -n 's/.*"used_percent": *\([0-9.]*\).*/\1/p')
+    if [ -n "$HERMES_DISK" ]; then
+      HERMES_DISK_INT=${HERMES_DISK%.*}
+      if [ "${HERMES_DISK_INT:-0}" -ge 80 ]; then
+        warn "hermes volume at ${HERMES_DISK}% (threshold 80%) — sessions/skills/memory growth" \
+             "fly volumes extend on openscaffold-hermes, or prune old sessions"
+      else
+        ok "hermes volume at ${HERMES_DISK}% used"
+      fi
+    else
+      warn "hermes /health/detailed gave no disk metric — check auth or API drift" \
+           "curl -H \"Authorization: Bearer \$(security find-generic-password -s hermes-api-server-key-2026-07-20 -w)\" $HERMES_URL/health/detailed"
+    fi
+  else
+    skip "hermes disk check skipped — hermes-api-server-key-2026-07-20 not in this Mac's Keychain"
+  fi
+else
+  warn "hermes gateway not healthy at $HERMES_URL (suspended cold-wake can take a few s — rerun once before escalating)" \
+       "fly status -a openscaffold-hermes && fly logs -a openscaffold-hermes"
+fi
+echo ""
+
 # ── [7/7] Paperclip ─────────────────────────────────────
+# Real check since 2026-07-21 (deployed 2026-04-20; the old "deployment in
+# progress" skip was 3 months stale — found during the F-8 monitoring pass).
 echo "[7/7] Paperclip (agent coordination)"
 begin_tool "paperclip" "Paperclip" "Coordination"
-skip "deployment in progress (task #38) — add real check when Paperclip is live"
+PAPERCLIP_URL="${PAPERCLIP_HEALTH_URL:-https://paperclip-prod.fly.dev}"
+PAPERCLIP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 30 "$PAPERCLIP_URL/health" 2>/dev/null)
+if [ "$PAPERCLIP_CODE" = "200" ]; then
+  ok "paperclip healthy (HTTP 200) at $PAPERCLIP_URL"
+else
+  warn "paperclip /health returned HTTP ${PAPERCLIP_CODE:-none} at $PAPERCLIP_URL" \
+       "fly status -a paperclip-prod (Dale's org access) · check the Hub /agents page"
+fi
 echo ""
 
 # ── End of numbered tool sections — seal the last [7/7] tool so any
