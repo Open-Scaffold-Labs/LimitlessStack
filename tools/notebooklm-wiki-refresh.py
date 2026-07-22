@@ -391,24 +391,78 @@ def _extract_content(remote_text: str) -> str:
     return "\n".join(keep)
 
 
+def _prose_lines(text: str) -> str:
+    """Return only the prose lines of a markdown file — dropping YAML
+    frontmatter, fenced code blocks, and markdown table rows/separators.
+
+    cmd_verify_content samples short markers from this text. NotebookLM's
+    indexer REFLOWS tables (strips the pipe delimiters, drops separator
+    rows, and reorders cell text) and can rewrite fenced code, so a marker
+    that lands inside those regions won't appear verbatim in the indexed
+    copy even when the upload succeeded — producing a false "stale" verdict.
+    Prose (paragraphs, headings, list text) indexes verbatim, so sampling
+    markers from it gives a trustworthy signal. Headings are kept (their
+    leading '#' is normalized away later by _strip_for_compare).
+
+    Conservative on purpose: only lines that START with a pipe, or are made
+    up solely of table-separator characters, are treated as table lines, so
+    ordinary prose that happens to contain a pipe is never dropped.
+    """
+    out = []
+    in_frontmatter = False
+    in_code = False
+    for i, ln in enumerate(text.splitlines()):
+        stripped = ln.strip()
+        # YAML frontmatter: a '---' fenced block only when it opens line 0.
+        if i == 0 and stripped == "---":
+            in_frontmatter = True
+            continue
+        if in_frontmatter:
+            if stripped == "---":
+                in_frontmatter = False
+            continue
+        # Fenced code blocks (``` or ~~~).
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code = not in_code
+            continue
+        if in_code:
+            continue
+        # Markdown table rows (leading pipe) and separator rows (only made of
+        # pipes / dashes / colons / spaces, e.g. |---|:--:|).
+        if stripped.startswith("|"):
+            continue
+        if stripped and set(stripped) <= set("|-: "):
+            continue
+        out.append(ln)
+    return "\n".join(out)
+
+
 def cmd_verify_content(source_id: str, path: Path, wait_retries: int = 5) -> bool:
     """Fetch the source's indexed fulltext and confirm it matches the local
     file closely enough. NotebookLM's indexer is LOSSY: it strips markdown
-    punctuation (backticks, brackets, heading #'s, emphasis) AND drops
-    chunks of content (observed ~5% shrinkage on a 17K-char file with code
-    blocks). Any exact-match strategy on long strings will false-fail.
+    punctuation (backticks, brackets, heading #'s, emphasis), REFLOWS tables
+    (drops pipes/separators, reorders cells), AND drops chunks of content
+    (observed ~5% shrinkage on a 17K-char file with code blocks). Any
+    exact-match strategy on long strings will false-fail.
 
     Strategy: pick 5 short (30-char) markers evenly spaced through the
-    normalized file, and require at least 3 of 5 to appear in the remote.
-    This tolerates the indexer's lossiness while still catching genuine
-    staleness (where 0–1 markers would match because the remote is an
-    entirely different version).
+    normalized PROSE of the file (frontmatter, code blocks, and table rows
+    excluded — see _prose_lines), and require at least 3 of 5 to appear in
+    the remote. Sampling prose rather than the whole file avoids false
+    "stale" verdicts on table-heavy pages, where markers landing in reflowed
+    tables would miss even though the upload succeeded. Genuine staleness is
+    still caught (a truly different remote matches 0–1 markers). When a page
+    has too little prose to sample (<150 normalized chars, e.g. an almost
+    all-table page), fall back to whole-file markers — no worse than the
+    pre-fix behavior for that rare case.
 
     Polls with backoff (2,4,8,16,30s) to let indexing complete.
     """
     delays = [2, 4, 8, 16, 30]
     local_text = path.read_text()
-    local_norm = _strip_for_compare(local_text)
+    prose_norm = _strip_for_compare(_prose_lines(local_text))
+    # Prefer prose markers; fall back to whole-file only when prose is too thin.
+    local_norm = prose_norm if len(prose_norm) >= 150 else _strip_for_compare(local_text)
     L = len(local_norm)
     if L < 150:
         # Too-short files: fall back to single full-content check
