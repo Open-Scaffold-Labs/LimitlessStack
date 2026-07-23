@@ -14,6 +14,7 @@
 #   6. Copies CLAUDE.md vault schema template
 #   7. Copies self-heal templates for app repos
 #   8. Checks for API keys (the only thing you need to set up manually)
+#   9. Renders + wires the nightly self-heal scheduler (launchd LaunchAgent)
 
 set -euo pipefail
 
@@ -29,7 +30,7 @@ echo ""
 mkdir -p "$TARGET"
 
 # --- 1. Python dependencies ---
-echo "[1/8] Installing Python dependencies..."
+echo "[1/9] Installing Python dependencies..."
 if command -v python3.11 &> /dev/null; then
   PYTHON=python3.11
   PIP=pip3.11
@@ -49,7 +50,7 @@ if [ -n "$PIP" ]; then
 fi
 
 # --- 2. Playwright (for NotebookLM browser auth) ---
-echo "[2/8] Installing Playwright chromium..."
+echo "[2/9] Installing Playwright chromium..."
 if command -v playwright &> /dev/null; then
   playwright install chromium 2>&1 | tail -3
   echo "  ✓ Playwright chromium installed"
@@ -58,7 +59,7 @@ else
 fi
 
 # --- 3. Skills ---
-echo "[3/8] Installing skills to ~/.claude/skills/..."
+echo "[3/9] Installing skills to ~/.claude/skills/..."
 SKILLS_DIR="$HOME/.claude/skills"
 for skill in limitless-stack notebooklm four-tool-lookup roll-call verify-before-claim karpathy-guidelines audit-before-claim; do
   mkdir -p "$SKILLS_DIR/$skill"
@@ -72,16 +73,16 @@ echo "   roll-call = session-start preflight; verify-before-claim = guard agains
 
 # --- 4. Vault template ---
 if [ ! -d "$TARGET/wiki" ]; then
-  echo "[4/8] Copying vault template..."
+  echo "[4/9] Copying vault template..."
   cp -r "$SCRIPT_DIR/obsidian/vault-template/wiki" "$TARGET/wiki"
   mkdir -p "$TARGET/raw/openscaffold-repos"
   echo "  ✓ wiki/ and raw/ created"
 else
-  echo "[4/8] wiki/ already exists — skipping vault template"
+  echo "[4/9] wiki/ already exists — skipping vault template"
 fi
 
 # --- 5. Tool scripts ---
-echo "[5/8] Copying tool scripts..."
+echo "[5/9] Copying tool scripts..."
 mkdir -p "$TARGET/tools"
 # Pinecone sync + search
 cp "$SCRIPT_DIR/pinecone/pinecone-sync.py" "$TARGET/tools/pinecone-sync.py"
@@ -92,24 +93,35 @@ cp "$SCRIPT_DIR/tools/notebooklm-dedupe.py" "$TARGET/tools/notebooklm-dedupe.py"
 # Session lifecycle scripts
 cp "$SCRIPT_DIR/tools/session-bootstrap.sh" "$TARGET/tools/session-bootstrap.sh"
 cp "$SCRIPT_DIR/tools/limitless-preflight.sh" "$TARGET/tools/limitless-preflight.sh"
+# Loop tools: the nightly self-heal outer loop (Loop 5), the trust-anchor reality
+# inspector (Loop 6), and the self-updating anti-patterns gatherer (rec #5).
+cp "$SCRIPT_DIR/tools/nightly-selfheal.sh"        "$TARGET/tools/nightly-selfheal.sh"
+cp "$SCRIPT_DIR/tools/trust-anchor-check.py"      "$TARGET/tools/trust-anchor-check.py"
+cp "$SCRIPT_DIR/tools/anti-pattern-candidates.py" "$TARGET/tools/anti-pattern-candidates.py"
+# The nightly-selfheal launchd plist TEMPLATE (rendered + wired in step 9).
+cp "$SCRIPT_DIR/tools/com.openscaffold.nightly-selfheal.plist.template" \
+   "$TARGET/tools/com.openscaffold.nightly-selfheal.plist.template"
 chmod +x "$TARGET/tools/session-bootstrap.sh" "$TARGET/tools/limitless-preflight.sh" \
-         "$TARGET/tools/notebooklm-wiki-refresh.py" "$TARGET/tools/notebooklm-dedupe.py"
+         "$TARGET/tools/notebooklm-wiki-refresh.py" "$TARGET/tools/notebooklm-dedupe.py" \
+         "$TARGET/tools/nightly-selfheal.sh" "$TARGET/tools/trust-anchor-check.py" \
+         "$TARGET/tools/anti-pattern-candidates.py"
 echo "  ✓ pinecone-sync, pinecone-search, notebooklm-wiki-refresh, notebooklm-dedupe,"
-echo "    session-bootstrap, limitless-preflight (the script Roll Call calls)"
+echo "    session-bootstrap, limitless-preflight (the script Roll Call calls),"
+echo "    nightly-selfheal (Loop 5), trust-anchor-check (Loop 6), anti-pattern-candidates (rec #5)"
 echo "  Note: edit tools/limitless-preflight.sh + notebooklm-wiki-refresh.py to point at"
 echo "  YOUR vault path and YOUR NotebookLM bucket IDs before first run."
 
 # --- 6. CLAUDE.md ---
 if [ ! -f "$TARGET/CLAUDE.md" ]; then
-  echo "[6/8] Copying CLAUDE.md vault schema..."
+  echo "[6/9] Copying CLAUDE.md vault schema..."
   sed -n '/^```markdown$/,/^```$/p' "$SCRIPT_DIR/claude-md/vault-schema.md" | sed '1d;$d' > "$TARGET/CLAUDE.md"
   echo "  ✓ CLAUDE.md created — edit the [YOUR DOMAIN] placeholders"
 else
-  echo "[6/8] CLAUDE.md already exists — skipping"
+  echo "[6/9] CLAUDE.md already exists — skipping"
 fi
 
 # --- 7. Self-heal templates ---
-echo "[7/8] Copying self-heal templates..."
+echo "[7/9] Copying self-heal templates..."
 mkdir -p "$TARGET/self-heal-templates"
 cp "$SCRIPT_DIR/self-heal/templates/self-heal.yml" "$TARGET/self-heal-templates/self-heal.yml"
 cp "$SCRIPT_DIR/self-heal/templates/self-heal-agent.js" "$TARGET/self-heal-templates/self-heal-agent.js"
@@ -117,7 +129,7 @@ cp "$SCRIPT_DIR/self-heal/templates/SELF-HEAL-SETUP.md" "$TARGET/self-heal-templ
 echo "  ✓ self-heal templates ready — copy into each app repo as needed"
 
 # --- 8. API key check ---
-echo "[8/8] Checking API keys..."
+echo "[8/9] Checking API keys..."
 KEYS_MISSING=false
 
 if security find-generic-password -s pinecone-api-key &> /dev/null 2>&1; then
@@ -140,6 +152,28 @@ fi
 echo ""
 echo "  Note: NotebookLM requires browser-based Google auth."
 echo "  Run 'notebooklm login' to authenticate (one-time setup)."
+
+# --- 9. Nightly self-heal scheduler ---
+echo ""
+echo "[9/9] Rendering the nightly self-heal scheduler (launchd)..."
+NSH_TEMPLATE="$TARGET/tools/com.openscaffold.nightly-selfheal.plist.template"
+NSH_PLIST="$TARGET/tools/com.openscaffold.nightly-selfheal.plist"
+if [ -f "$NSH_TEMPLATE" ]; then
+  # Render the plist with THIS vault's path. '|' as the sed delimiter since the
+  # path contains slashes (but not '|').
+  sed "s|__VAULT__|$TARGET|g" "$NSH_TEMPLATE" > "$NSH_PLIST"
+  if command -v plutil >/dev/null 2>&1 && ! plutil -lint "$NSH_PLIST" >/dev/null 2>&1; then
+    echo "  ⚠ rendered plist failed validation — inspect $NSH_PLIST"
+  else
+    echo "  ✓ rendered $NSH_PLIST (runs $TARGET/tools/nightly-selfheal.sh at 04:10 nightly)"
+  fi
+  echo "  To ACTIVATE (deliberately NOT auto-installed — run these yourself):"
+  echo "    cp \"$NSH_PLIST\" ~/Library/LaunchAgents/"
+  echo "    launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/com.openscaffold.nightly-selfheal.plist"
+  echo "    launchctl kickstart -k gui/\$(id -u)/com.openscaffold.nightly-selfheal   # optional: test-run now"
+else
+  echo "  ⚠ plist template not found ($NSH_TEMPLATE) — scheduler not rendered"
+fi
 
 echo ""
 echo "=== Installation Complete ==="

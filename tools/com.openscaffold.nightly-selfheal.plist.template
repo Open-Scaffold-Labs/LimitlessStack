@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.openscaffold.nightly-selfheal — Loop 5 (Limitless Stack outer loop) TEMPLATE.
+  install.sh renders this by substituting the vault-path placeholder with the
+  target vault path, producing tools/com.openscaffold.nightly-selfheal.plist. Runs
+  tools/nightly-selfheal.sh at ~04:10 local time each night.
+
+  Activate the rendered plist (LaunchAgent — runs as you in your GUI session so
+  Keychain + notebooklm auth are reachable):
+
+    cp "<vault>/tools/com.openscaffold.nightly-selfheal.plist" ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.openscaffold.nightly-selfheal.plist
+    launchctl enable  gui/$(id -u)/com.openscaffold.nightly-selfheal
+
+  Uninstall:
+    launchctl bootout gui/$(id -u)/com.openscaffold.nightly-selfheal
+    rm ~/Library/LaunchAgents/com.openscaffold.nightly-selfheal.plist
+
+  Run once now (test):
+    launchctl kickstart -k gui/$(id -u)/com.openscaffold.nightly-selfheal
+
+  If the Mac is asleep at 04:10, launchd fires the job on next wake.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openscaffold.nightly-selfheal</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__VAULT__/tools/nightly-selfheal.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>10</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Minimal but sufficient PATH; the script also re-exports its own PATH. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__VAULT__/tools/logs/launchd-nightly-selfheal.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__VAULT__/tools/logs/launchd-nightly-selfheal.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
