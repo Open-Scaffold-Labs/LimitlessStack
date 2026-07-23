@@ -74,7 +74,43 @@ def recent_mistake_log(text, n):
     return entries
 
 
+def review_due():
+    """Is an anti-pattern review DUE? Compares the newest mistake-bearing log
+    entry date against the anti-patterns page's 'updated:' (last-reviewed) date.
+    Returns (due, count_newer, reviewed_date, newest_mistake_date).
+
+    Granularity is by DATE — a mistake logged on the SAME day as the last review
+    won't register until the date rolls (fine for a gentle 'review due' nudge,
+    not an alarm). This is the deterministic TRIGGER for the otherwise-manual
+    rec #5 loop: it tells a session 'you've logged mistakes since the last
+    anti-pattern review — run the inspector'."""
+    ap = _read(AP)
+    m = re.search(r"^updated:\s*(\d{4}-\d{2}-\d{2})", ap, re.M)
+    reviewed = m.group(1) if m else "0000-00-00"
+    dates = re.findall(r"^## \[(\d{4}-\d{2}-\d{2})\]\s+(\w+)\s*\|", _read(LOG), re.M)
+    mistake_dates = [d for d, op in dates if op in MISTAKE_OPS]
+    newer = [d for d in mistake_dates if d > reviewed]
+    newest = max(mistake_dates) if mistake_dates else "0000-00-00"
+    return (len(newer) > 0, len(newer), reviewed, newest)
+
+
 def main():
+    if "--check-due" in sys.argv:
+        try:
+            due, count, reviewed, newest = review_due()
+        except OSError as exc:
+            sys.stderr.write(f"anti-pattern-candidates: {exc}\n")
+            return 2
+        if due:
+            # Lead with a STABLE identity phrase ("anti-pattern review due") so the
+            # nightly's non-escalation allowlist can match it — this is a
+            # session-time nudge for the interactive agent, not a nightly alarm.
+            print(f"anti-pattern review due: {count} mistake-bearing log entr"
+                  f"{'y' if count == 1 else 'ies'} since the last review ({reviewed}); newest {newest}")
+            return 1
+        print(f"anti-pattern log in sync (last review {reviewed}; newest mistake-log entry {newest})")
+        return 0
+
     n = 12
     if "--log-entries" in sys.argv:
         try:

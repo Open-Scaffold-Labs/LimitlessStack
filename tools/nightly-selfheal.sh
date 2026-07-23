@@ -232,7 +232,7 @@ if [ "$START_RC" -ne 0 ] && [ "$PF_RC" -eq 0 ]; then HEALED="true"; fi
 # could suppress a real finding that merely contained the word). uncommitted +
 # tightening added per the 2026-07-23 design audit; the self-referential latch
 # was caught by running the nightly twice that same day.
-ACCEPTED_RE='Pinecone embedding quota exhausted|newer than last Pinecone sync|uncommitted files in vault|last nightly self-heal ended'
+ACCEPTED_RE='Pinecone embedding quota exhausted|newer than last Pinecone sync|uncommitted files in vault|last nightly self-heal ended|anti-pattern review due'
 RESIDUAL_ACTIONABLE=""
 if [ "$PF_RC" -ne 0 ]; then
   RESIDUAL_ACTIONABLE="$(printf '%s\n' "$PF_FINDINGS" | grep -viE "$ACCEPTED_RE" | grep -v '^[[:space:]]*$' || true)"

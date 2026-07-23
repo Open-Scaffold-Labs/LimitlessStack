@@ -498,6 +498,31 @@ else
 fi
 echo ""
 
+# ── [meta] Anti-pattern review (rec #5 self-trigger) ────
+# The self-updating anti-patterns loop (rec #5) only fires when a session runs
+# its inspector — a discipline-dependent gap (anti-pattern #1). This is the
+# DETERMINISTIC trigger: it flags when mistake-bearing log entries have been
+# written since the anti-patterns page was last reviewed, so the interactive
+# session gets a nudge to run the inspector. Human/agent-gated (the inspection
+# is an LLM step) — surfaced at Roll Call, but ADDED to the nightly's
+# non-escalation allowlist so it never wakes Matt at 04:10. Added 2026-07-23.
+echo "[meta] Anti-pattern review (rec #5 self-trigger)"
+if [ -r "$VAULT/tools/anti-pattern-candidates.py" ]; then
+  AP_OUT=$(python3.11 "$VAULT/tools/anti-pattern-candidates.py" --check-due 2>&1)
+  AP_EXIT=$?
+  if [ "$AP_EXIT" -eq 0 ]; then
+    ok "$AP_OUT"
+  elif [ "$AP_EXIT" -eq 1 ]; then
+    warn "$AP_OUT" \
+         "run the rec #5 inspector this session (gather + independent inspector subagent), stage proposals for Matt, then bump claude-anti-patterns.md updated:"
+  else
+    skip "anti-pattern review check errored — $AP_OUT"
+  fi
+else
+  skip "anti-pattern-candidates.py not present — skipping rec #5 trigger"
+fi
+echo ""
+
 # ── [4/7] Pinecone ──────────────────────────────────────
 echo "[4/7] Pinecone (semantic memory)"
 if ! check_enabled "pinecone"; then
