@@ -47,6 +47,23 @@ HOST="$(whoami)@$(hostname -s 2>/dev/null || echo unknown)"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] $*" | tee -a "$LOG_FILE"; }
 
+# ── Single-instance lock ────────────────────────────────
+# A manual `launchctl kickstart` can collide with the 04:10 scheduled fire (and
+# repeated kickstarts stack up) — concurrent runs waste the NotebookLM sweep and
+# race on the state file. mkdir is atomic → a clean lock; a lock whose pid is
+# dead is reclaimed as stale. (2026-07-23 audit — observed real overlap.)
+LOCK_DIR="$SCRIPT_DIR/.nightly-selfheal.lock"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  if [ -f "$LOCK_DIR/pid" ] && kill -0 "$(cat "$LOCK_DIR/pid" 2>/dev/null)" 2>/dev/null; then
+    log "another nightly-selfheal run is active (pid $(cat "$LOCK_DIR/pid")) — exiting"
+    exit 0
+  fi
+  rm -rf "$LOCK_DIR"                        # stale lock (dead pid) — reclaim
+  mkdir "$LOCK_DIR" 2>/dev/null || { log "lock race — exiting"; exit 0; }
+fi
+echo $$ > "$LOCK_DIR/pid"
+trap 'rm -rf "$LOCK_DIR"' EXIT
+
 cd "$VAULT" || { log "FATAL: cannot cd to vault"; exit 2; }
 
 log "──────── nightly self-heal starting (host=$HOST) ────────"
@@ -78,10 +95,17 @@ run_preflight() {
 # the preflight scoped them (e.g. `--only wiki`) so we never do a slow unscoped
 # all-routes refresh (that unscoped run is anti-pattern #19). Everything else —
 # git/commit, launchd install, canonical drift, Pinecone quota — is left for a
-# human or is a known-accepted state. Reconstructs the command from a fixed
-# template + the extracted flags (never eval's the raw hint) so a malformed hint
-# can't inject anything: the route label is constrained to [a-z-]+.
-# Prints one shell command per line (deduped).
+# human or is a known-accepted state.
+#
+# EXCLUSION (2026-07-23 design audit): `--only reminder` is NOT auto-run — for
+# file sources `--force` is a no-op (CLAUDE.md step 7) so it cannot actually
+# heal (it would log success, leave the finding, burn budget, escalate anyway),
+# and unattended mutation of the curated reminder layer is out of "safe
+# corrector" scope. Reminder drift is left to a human.
+#
+# Emits one corrector per line as TAB-separated `tool<TAB>label<TAB>flags`
+# (label/flags empty for pinecone). The caller dispatches with an explicit args
+# array — NO eval, no command-string reconstruction. Labels are [a-z0-9-]+.
 plan_correctors() {
   local findings="$1"
   local quota_present=0
@@ -91,27 +115,19 @@ plan_correctors() {
     local fix="${line#*→}"    # text after the arrow = the preflight's fix hint
     case "$fix" in
       *notebooklm-wiki-refresh.py*--only*)
-        local label force="" verify="" seed=""
-        label="$(printf '%s' "$fix" | sed -nE 's/.*--only[[:space:]]+([a-z-]+).*/\1/p')"
-        printf '%s' "$fix" | grep -q -- '--force'           && force=" --force"
-        printf '%s' "$fix" | grep -q -- '--verify-existing' && verify=" --verify-existing"
-        printf '%s' "$fix" | grep -q -- '--seed'            && seed=" --seed"
-        [ -n "$label" ] && echo "python3.11 \"$SCRIPT_DIR/notebooklm-wiki-refresh.py\"$seed$force$verify --only $label"
+        local label flags=""
+        label="$(printf '%s' "$fix" | sed -nE 's/.*--only[[:space:]]+([a-z0-9-]+).*/\1/p')"
+        [ "$label" = "reminder" ] && continue   # not auto-healable (see header)
+        printf '%s' "$fix" | grep -q -- '--seed'            && flags="$flags --seed"
+        printf '%s' "$fix" | grep -q -- '--force'           && flags="$flags --force"
+        printf '%s' "$fix" | grep -q -- '--verify-existing' && flags="$flags --verify-existing"
+        [ -n "$label" ] && printf 'notebooklm\t%s\t%s\n' "$label" "${flags# }"
         ;;
       *pinecone-sync.py*--changed-only*)
-        [ "$quota_present" -eq 0 ] && echo "python3.11 \"$SCRIPT_DIR/pinecone-sync.py\" --changed-only"
+        [ "$quota_present" -eq 0 ] && printf 'pinecone\t\t\n'
         ;;
     esac
   done | sort -u
-}
-
-# Short state-file tag for a corrector command (e.g. "notebooklm:wiki", "pinecone").
-corrector_tag() {
-  case "$1" in
-    *notebooklm-wiki-refresh*) echo "notebooklm:$(printf '%s' "$1" | sed -nE 's/.*--only ([a-z-]+).*/\1/p')" ;;
-    *pinecone-sync*)           echo "pinecone" ;;
-    *)                         echo "unknown" ;;
-  esac
 }
 
 # ── The loop ────────────────────────────────────────────
@@ -128,11 +144,22 @@ while [ "$PF_RC" -ne 0 ] && [ "$PASS" -lt "$MAX_PASSES" ]; do
     log "  no deterministic corrector applies to residual findings — stopping (human-gated)"
     break
   fi
-  while IFS= read -r cmd; do
-    [ -z "$cmd" ] && continue
-    log "  ↻ corrector: $cmd"
-    if eval "$cmd" >>"$LOG_FILE" 2>&1; then log "    ✓ done"; else log "    ✗ exited non-zero (see log)"; fi
-    CORRECTORS_RUN+=("$(corrector_tag "$cmd")")
+  while IFS=$'\t' read -r tool label flags; do
+    [ -z "$tool" ] && continue
+    case "$tool" in
+      notebooklm)
+        log "  ↻ corrector: notebooklm-wiki-refresh.py${flags:+ $flags} --only $label"
+        # $flags is a fixed whitelist of our own flags — intentional word-split.
+        # shellcheck disable=SC2086
+        if python3.11 "$SCRIPT_DIR/notebooklm-wiki-refresh.py" $flags --only "$label" >>"$LOG_FILE" 2>&1
+          then log "    ✓ done"; else log "    ✗ exited non-zero (see log)"; fi
+        CORRECTORS_RUN+=("notebooklm:$label") ;;
+      pinecone)
+        log "  ↻ corrector: pinecone-sync.py --changed-only"
+        if python3.11 "$SCRIPT_DIR/pinecone-sync.py" --changed-only >>"$LOG_FILE" 2>&1
+          then log "    ✓ done"; else log "    ✗ exited non-zero (see log)"; fi
+        CORRECTORS_RUN+=("pinecone") ;;
+    esac
   done <<< "$PLAN"
   run_preflight
   PASS=$((PASS+1))
@@ -148,12 +175,22 @@ esac
 HEALED="false"
 if [ "$START_RC" -ne 0 ] && [ "$PF_RC" -eq 0 ]; then HEALED="true"; fi
 
-# Known-accepted residual states — no corrector can (or should) fix them and
-# they do NOT warrant waking a human. Currently: the Pinecone embedding
-# monthly-quota exhaustion and its downstream "wiki newer than last Pinecone
-# sync". Recorded in the state file, but excluded from the needs-human decision
-# so the nightly doesn't nag every morning until the quota resets.
-ACCEPTED_RE='quota|newer than last Pinecone sync'
+# Report-only / non-escalating residual states — recorded in the state file but
+# they do NOT set needs_human, so the nightly never cries wolf on them:
+#   • "Pinecone embedding quota exhausted" + its downstream sync-lag — unfixable
+#     by any corrector until the monthly cap resets.
+#   • "uncommitted files in vault" — human-gated by policy (the nightly must
+#     NEVER commit), so escalating it every morning is pure noise.
+#   • "last nightly self-heal ended ..." — the preflight's [meta] readout of the
+#     nightly's OWN prior state. Counting it as actionable creates a LATCH: once
+#     a run ends needs_human=true, every later run re-reads that warn as fresh
+#     drift and can never self-clear. Excluding it lets a genuinely-clean night
+#     report clean. (The preflight still shows it to a HUMAN at Roll Call.)
+# Matched by finding IDENTITY, not a loose keyword (the old 'quota' substring
+# could suppress a real finding that merely contained the word). uncommitted +
+# tightening added per the 2026-07-23 design audit; the self-referential latch
+# was caught by running the nightly twice that same day.
+ACCEPTED_RE='Pinecone embedding quota exhausted|newer than last Pinecone sync|uncommitted files in vault|last nightly self-heal ended'
 RESIDUAL_ACTIONABLE=""
 if [ "$PF_RC" -ne 0 ]; then
   RESIDUAL_ACTIONABLE="$(printf '%s\n' "$PF_FINDINGS" | grep -viE "$ACCEPTED_RE" | grep -v '^[[:space:]]*$' || true)"
@@ -198,7 +235,9 @@ print(json.dumps({
 }, indent=2))
 PY
 )"
-printf '%s\n' "$STATE_JSON" > "$STATE_FILE"
+# Atomic write (temp + mv) so a concurrent preflight read never sees a
+# half-written file. (2026-07-23 audit.)
+printf '%s\n' "$STATE_JSON" > "$STATE_FILE.tmp" && mv -f "$STATE_FILE.tmp" "$STATE_FILE"
 log "wrote state → $STATE_FILE"
 
 # ── Hub activity row (heartbeat every run; the row IS the escalation when
