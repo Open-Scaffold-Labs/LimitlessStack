@@ -450,6 +450,43 @@ else
 fi
 echo ""
 
+# ── [meta] Trust-anchor reality (Loop 6) ────────────────
+# The CLAUDE.md files are the stack's trust anchors — every session reads them
+# as ground truth, so silent doc/reality drift propagates as confidently-stated
+# wrong facts (the #12/#14/#33 class). tools/trust-anchor-check.py mechanizes
+# the checkable part of the end-of-session "refresh the trust anchors" step:
+# Hub migration table vs migrations/ files, self-referential backtick file-path
+# claims, and notebook IDs vs the routing config. Conservative by design (only
+# unambiguous drift) so it never cries wolf. Drift here is HUMAN-GATED — the
+# nightly (Loop 5) surfaces/escalates it but never auto-edits a trust anchor.
+# Added 2026-07-23 with Loop 6.
+echo "[meta] Trust-anchor reality (Loop 6)"
+if [ -r "$VAULT/tools/trust-anchor-check.py" ]; then
+  TA_ERRF="/tmp/.ta_err.$$"
+  TA_OUT=$(python3.11 "$VAULT/tools/trust-anchor-check.py" 2>"$TA_ERRF")
+  TA_EXIT=$?
+  TA_ERR=$(cat "$TA_ERRF" 2>/dev/null; rm -f "$TA_ERRF")
+  if [ "$TA_EXIT" -eq 2 ]; then
+    warn "trust-anchor check errored" "${TA_ERR:-see tools/trust-anchor-check.py}"
+  else
+    # Lines are either "SKIP: <reason>" (a dimension that couldn't run) or
+    # "<message>\t<fix>" (a drift finding). here-string (not a pipe) so warn()
+    # updates THIS shell's counters. The green line claims only what ran.
+    ta_drift=0
+    while IFS= read -r ta_line; do
+      [ -z "$ta_line" ] && continue
+      case "$ta_line" in
+        SKIP:*) skip "trust-anchor ${ta_line#SKIP: }" ;;
+        *)      warn "${ta_line%%$'\t'*}" "${ta_line#*$'\t'}"; ta_drift=1 ;;
+      esac
+    done <<< "$TA_OUT"
+    [ "$ta_drift" -eq 0 ] && ok "trust anchors match reality (no drift in the checks that ran)"
+  fi
+else
+  skip "trust-anchor-check.py not present — skipping Loop 6"
+fi
+echo ""
+
 # ── [4/7] Pinecone ──────────────────────────────────────
 echo "[4/7] Pinecone (semantic memory)"
 if ! check_enabled "pinecone"; then
