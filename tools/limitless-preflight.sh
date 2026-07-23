@@ -387,6 +387,69 @@ else
 fi
 echo ""
 
+# ── [meta] Nightly self-heal (Loop 5 outer loop) ────────
+# The scheduled outer loop (tools/nightly-selfheal.sh via launchd
+# com.openscaffold.nightly-selfheal) runs THIS preflight unattended each night
+# and auto-runs the deterministic correctors. Surface its last run here so a
+# silently-broken nightly (Mac asleep for days, launchd unloaded, or a residual
+# finding no corrector can fix) shows up at the NEXT session start instead of
+# rotting unnoticed. Added 2026-07-23 with Loop 5.
+echo "[meta] Nightly self-heal (Loop 5)"
+NSH_LABEL="com.openscaffold.nightly-selfheal"
+NSH_PLIST="$HOME/Library/LaunchAgents/$NSH_LABEL.plist"
+NSH_STATE="$VAULT/tools/.nightly-selfheal-state.json"
+if [ ! -f "$NSH_PLIST" ]; then
+  warn "nightly self-heal launchd job not installed" \
+       "cp \"$VAULT/tools/$NSH_LABEL.plist\" ~/Library/LaunchAgents/ && launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/$NSH_LABEL.plist"
+elif ! launchctl print "gui/$(id -u)/$NSH_LABEL" >/dev/null 2>&1; then
+  warn "nightly self-heal launchd job installed but not loaded" \
+       "launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/$NSH_LABEL.plist"
+else
+  ok "nightly self-heal launchd job loaded ($NSH_LABEL)"
+fi
+if [ -f "$NSH_STATE" ]; then
+  NSH_LINE=$(python3 - "$NSH_STATE" <<'PY'
+import json, sys, datetime
+try:
+    s = json.load(open(sys.argv[1]))
+except Exception as e:
+    print("PARSE\terror reading state: %s\t-" % e); sys.exit()
+lr = s.get("last_run", "")
+try:
+    dt = datetime.datetime.strptime(lr, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+    age_h = (datetime.datetime.now(datetime.timezone.utc) - dt).total_seconds() / 3600
+except Exception:
+    age_h = 9999
+verdict = s.get("final_verdict", "unknown")
+resid = len(s.get("residual_findings", []))
+corr = ",".join(s.get("correctors_run", [])) or "none"
+healed = s.get("healed", False)
+needs_human = s.get("needs_human", verdict != "ready")
+if age_h > 30:
+    print("STALE\tlast nightly self-heal was %.0fh ago (verdict=%s) — job may be broken or Mac asleep\tlaunchctl kickstart -k gui/$(id -u)/com.openscaffold.nightly-selfheal  (or check tools/logs/)" % (age_h, verdict))
+elif needs_human:
+    print("NEEDHUMAN\tlast nightly self-heal ended %s with %d residual finding(s), correctors=%s\tsee tools/.nightly-selfheal-state.json + tools/logs/" % (verdict, resid, corr))
+elif verdict != "ready":
+    print("OK\tlast nightly self-heal: READY* (%.0fh ago, %d known-accepted residual, correctors=%s)\t-" % (age_h, resid, corr))
+else:
+    tag = "HEALED->READY" if healed else "READY"
+    print("OK\tlast nightly self-heal: %s (%.0fh ago, correctors=%s)\t-" % (tag, age_h, corr))
+PY
+)
+  NSH_STATUS="${NSH_LINE%%$'\t'*}"
+  NSH_REST="${NSH_LINE#*$'\t'}"
+  NSH_MSG="${NSH_REST%%$'\t'*}"
+  NSH_FIX="${NSH_REST##*$'\t'}"
+  case "$NSH_STATUS" in
+    OK)              ok   "$NSH_MSG" ;;
+    STALE|NEEDHUMAN) warn "$NSH_MSG" "$NSH_FIX" ;;
+    *)               warn "nightly self-heal state unreadable: $NSH_MSG" "rm $NSH_STATE  (next nightly rewrites it)" ;;
+  esac
+else
+  skip "no nightly self-heal run recorded yet (state file absent)"
+fi
+echo ""
+
 # ── [4/7] Pinecone ──────────────────────────────────────
 echo "[4/7] Pinecone (semantic memory)"
 if ! check_enabled "pinecone"; then
