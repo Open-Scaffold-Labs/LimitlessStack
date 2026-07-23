@@ -104,13 +104,24 @@ BLOCKERS=()
 # ── CLI args ────────────────────────────────────────────
 # --json-out         → writes ~/.cache/limitless-stack/health.json with payload
 # --json-out=PATH    → writes payload to an explicit path
+# --findings-out=PATH→ writes a machine-readable findings JSON at verdict time:
+#                      {verdict,green,yellow,red,warnings[],blockers[],generated_at}.
+#                      This is the STABLE channel for programmatic consumers
+#                      (the Loop 5 nightly) so they never have to scrape the
+#                      human-readable "  - msg  →  fix" lines — a cosmetic output
+#                      edit would otherwise silently break every consumer (a SPOF
+#                      both the Loop 5 and Loop 6 audits flagged, 2026-07-23).
+#                      Human output is UNCHANGED whether or not this is passed.
 JSON_OUT=""
+FINDINGS_OUT=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --json-out)       JSON_OUT="${HOME}/.cache/limitless-stack/health.json" ;;
     --json-out=*)     JSON_OUT="${1#*=}" ;;
+    --findings-out=*) FINDINGS_OUT="${1#*=}" ;;
     -h|--help)
-      echo "usage: limitless-preflight.sh [--json-out[=PATH]]"
+      echo "usage: limitless-preflight.sh [--json-out[=PATH]] [--findings-out=PATH]"
+      echo "  --findings-out=PATH  write machine-readable findings JSON (for the nightly)."
       echo "  POST to the Hub happens automatically if Keychain has"
       echo "  lsh-stack-health-token (shared secret)."
       exit 0 ;;
@@ -1096,6 +1107,35 @@ echo "  • End-of-session → (1) git commit + push vault · (2) pinecone-sync.
 echo "                      (3) notebooklm-wiki-refresh.py if wiki changed"
 echo "                      (4) refresh ab4b7ccb sources if its curated files changed"
 echo ""
+
+# ── Machine-readable findings channel (--findings-out) ──
+# Written here, where the counts + WARNINGS[]/BLOCKERS[] arrays are final. This
+# is the STABLE contract for programmatic consumers (the Loop 5 nightly) so they
+# never scrape the human-readable "  - msg  →  fix" lines. Each warning/blocker
+# is the same "msg  →  fix" string the console prints, so a consumer gets an
+# identical findings list without depending on console formatting.
+if [ -n "$FINDINGS_OUT" ]; then
+  if   [ "$RED" -gt 0 ];    then FVERDICT="block"
+  elif [ "$YELLOW" -gt 0 ]; then FVERDICT="warn"
+  else                           FVERDICT="ready"; fi
+  FINDINGS_JSON=$(python3 -c '
+import sys, json, datetime
+verdict, g, y, r = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+warnings = [w for w in sys.argv[5].split("\x1f") if w]
+blockers = [b for b in sys.argv[6].split("\x1f") if b]
+print(json.dumps({
+  "verdict": verdict, "green": g, "yellow": y, "red": r,
+  "warnings": warnings, "blockers": blockers,
+  "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+}))
+' "$FVERDICT" "$GREEN" "$YELLOW" "$RED" \
+   "$(IFS=$'\x1f'; echo "${WARNINGS[*]:-}")" \
+   "$(IFS=$'\x1f'; echo "${BLOCKERS[*]:-}")" 2>/dev/null)
+  if [ -n "$FINDINGS_JSON" ]; then
+    mkdir -p "$(dirname "$FINDINGS_OUT")" 2>/dev/null
+    printf '%s\n' "$FINDINGS_JSON" > "$FINDINGS_OUT"
+  fi
+fi
 
 # ── Verdict ─────────────────────────────────────────────
 echo "───────────────────────────────────────────────────────"
