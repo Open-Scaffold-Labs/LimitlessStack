@@ -622,6 +622,31 @@ def cmd_replace(path: Path, old_source_id: str | None) -> tuple[str | None, bool
     return new_sid, verified
 
 
+def heal_verify(path: Path, sid: str | None, attempts: int = 2) -> tuple[str | None, bool]:
+    """Auto-heal a content-verify failure. After an initial verify miss, retry
+    the delete+re-add+verify cure (cmd_replace) up to `attempts` times. This
+    automates the previously-MANUAL cure documented in the vault CLAUDE.md
+    end-of-session step 7 / anti-pattern #12 — turning the sync's verify-ONLY
+    loop into verify→correct (the loop-engineering "self-correct" piece).
+
+    cmd_replace deletes the current source BEFORE re-adding, so this never grows
+    the notebook's source count — safe even against the 50-source cap. Returns
+    (source_id, verified): the freshest source_id and whether content finally
+    verified. On an exhausted budget it returns verified=False and the caller
+    records verify_failed exactly as it did before this heal existed."""
+    cur = sid
+    for i in range(1, attempts + 1):
+        print(f"    ↻ auto-heal {i}/{attempts} for {path.name} — re-add + re-verify")
+        new_sid, verified = cmd_replace(path, cur)
+        if new_sid:
+            cur = new_sid
+        if verified:
+            print(f"    ✓ auto-healed on attempt {i}/{attempts}")
+            return cur, True
+    print(f"    ✗ auto-heal exhausted after {attempts} attempts — surfacing verify_failed")
+    return cur, False
+
+
 # ── Routing: bucket wiki files by route ───────────────────────────────────
 def plan_routing() -> dict[str, list[Path]]:
     """Walk wiki/*.md; bucket each file into its route by first-match-wins.
@@ -731,6 +756,8 @@ def sync_route(notebook_id: str, label: str, display: str, files: list[Path], dr
             print(f"  [{display}] ~ replace {rel}")
             if not dry_run:
                 sid, verified = cmd_replace(path, entry["source_id"])
+                if sid and not verified:
+                    sid, verified = heal_verify(path, sid)
                 now_ts = time.time()
                 if sid and verified:
                     new_state[rel] = {
@@ -765,6 +792,8 @@ def sync_route(notebook_id: str, label: str, display: str, files: list[Path], dr
                     ghosts = _claim_unique_title(path.name, sid)
                     if ghosts > 0:
                         print(f"    ! ghost-dupe sweep removed {ghosts} stale copy/copies of {rel}")
+                    if not verified:
+                        sid, verified = heal_verify(path, sid)
                     now_ts = time.time()
                     entry_new = {"mtime": mtime, "source_id": sid}
                     if verified:
@@ -915,6 +944,8 @@ def sync_reminder(dry_run: bool, force: bool = False) -> None:
             print(f"  [reminder] ~ replace {rel}")
             if not dry_run:
                 sid, verified = cmd_replace(path, entry["source_id"])
+                if sid and not verified:
+                    sid, verified = heal_verify(path, sid)
                 now_ts = time.time()
                 if sid and verified:
                     new_state[rel] = {
@@ -946,6 +977,8 @@ def sync_reminder(dry_run: bool, force: bool = False) -> None:
                     ghosts = _claim_unique_title(path.name, sid)
                     if ghosts > 0:
                         print(f"    ! ghost-dupe sweep removed {ghosts} stale copy/copies of {rel}")
+                    if not verified:
+                        sid, verified = heal_verify(path, sid)
                     now_ts = time.time()
                     entry_new = {"mtime": mtime, "source_id": sid}
                     if verified:
