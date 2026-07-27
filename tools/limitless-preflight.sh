@@ -8,6 +8,8 @@
 #   0  READY — all green
 #   1  WARN  — yellow findings (drift / stale / uncommitted); session may proceed with acknowledgement
 #   2  BLOCK — red findings (auth failed, files missing); do NOT start work until fixed
+#   3  INDETERMINATE — this machine has no working network, so most checks CANNOT
+#      be evaluated. NOT a verdict about the stack. See network_probe() below.
 #
 # Self-improvement rule: if a drift mode is discovered during a session that
 # this script didn't catch, add a new check here before closing the session.
@@ -195,6 +197,98 @@ bad()   {
 }
 skip()  { echo "  ⊘ $1"; }
 
+# ── Network reachability gate (added 2026-07-27) ────────
+#
+# WHY THIS EXISTS
+# On 2026-07-27 the nightly self-heal returned BLOCK with 2 red and 12 yellow.
+# It looked like fourteen problems. It was one: the laptop lost DNS mid-run.
+# Pass 1 at 07:52 was green=34 yellow=11 red=0; passes 2 and 3 at 08:28/08:30
+# were red=2 — and every finding that appeared in between was a network-
+# dependent check reporting its own inability to reach the internet:
+# NameResolutionError on api.pinecone.io, `notebooklm list` failing, notebook
+# coverage exit=2, notebook capacity exit=2, hermes unhealthy, paperclip HTTP
+# 000. Three hours later the same checks were all green.
+#
+# The mechanism that turned a blip into needs_human is worth naming: the Loop 5
+# accepted-findings allowlist matches the Pinecone QUOTA text specifically, so a
+# DNS-class failure of that same probe did not match and escalated instead of
+# being absorbed. Widening the allowlist would be the wrong fix — it would
+# swallow a real Pinecone outage too.
+#
+# THE PRINCIPLE: a verdict computed with no network is not a verdict. Report
+# that we could not evaluate, rather than reporting a stack-wide failure that
+# does not exist. A checker that cries wolf trains the next reader to ignore it,
+# which is precisely what a preflight cannot afford.
+#
+# The probe deliberately separates two questions so it never mislabels a real
+# outage as a network problem:
+#   1. Is there IP connectivity at all?  → HTTPS to a literal IP (no DNS).
+#   2. Does DNS resolve?                 → getaddrinfo on stable public hosts.
+# BOTH must fail in their own way for us to declare the network down. If DNS
+# resolves and IP connectivity works, then a single service being unreachable is
+# a REAL finding and is reported normally — that path is unchanged.
+#
+# Probes are chosen to be independent of our own stack: none of them is Pinecone,
+# NotebookLM, Fly, or GitHub, so their health says nothing about ours.
+NET_STATE="unknown"
+NET_DETAIL=""
+
+network_probe() {
+  local ip_ok=false dns_ok=false detail=""
+
+  # 1. IP connectivity, no DNS involved. Two independent anycast resolvers.
+  for ip in 1.1.1.1 8.8.8.8; do
+    if curl -sS --max-time 6 -o /dev/null "https://$ip" 2>/dev/null; then ip_ok=true; break; fi
+  done
+
+  # 2. DNS resolution of stable third-party hosts. Any one success means DNS works.
+  if python3.11 - <<'PY' >/dev/null 2>&1
+import socket, sys
+socket.setdefaulttimeout(6)
+for host in ("one.one.one.one", "dns.google", "example.com"):
+    try:
+        socket.getaddrinfo(host, 443)
+        sys.exit(0)
+    except Exception:
+        continue
+sys.exit(1)
+PY
+  then dns_ok=true; fi
+
+  if   $ip_ok && $dns_ok; then NET_STATE="up"
+  elif $ip_ok;            then NET_STATE="dns-down"; detail="IP connectivity works but DNS does not resolve — the 2026-07-27 mode"
+  else                         NET_STATE="offline";  detail="no IP connectivity and no DNS — machine is offline or asleep"
+  fi
+  NET_DETAIL="$detail"
+  [ "$NET_STATE" = "up" ]
+}
+
+# Abort cleanly with exit 3, writing the machine-readable channel so the nightly
+# gets a structured "indeterminate" rather than having to scrape for it.
+network_abort() {
+  local phase="$1"
+  echo ""
+  echo "───────────────────────────────────────────────────────"
+  echo "  ⊘ VERDICT: INDETERMINATE — no working network ($NET_STATE, detected $phase)"
+  echo ""
+  echo "  $NET_DETAIL"
+  echo ""
+  echo "  This is NOT a finding about the Limitless Stack. Most checks reach the"
+  echo "  network, so running them now would manufacture failures that say only"
+  echo "  that this machine is offline. Nothing has been evaluated and no state"
+  echo "  has been overwritten."
+  echo ""
+  echo "  Rerun when connectivity is back. If it is back and this still fires,"
+  echo "  THAT is a real finding — investigate the probe, not the stack."
+  echo "───────────────────────────────────────────────────────"
+  if [ -n "$FINDINGS_OUT" ]; then
+    mkdir -p "$(dirname "$FINDINGS_OUT")" 2>/dev/null
+    printf '{"verdict":"indeterminate","reason":"network","net_state":"%s","phase":"%s","detail":"%s","green":0,"yellow":0,"red":0,"warnings":[],"blockers":[],"generated_at":"%s"}\n' \
+      "$NET_STATE" "$phase" "$NET_DETAIL" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$FINDINGS_OUT"
+  fi
+  exit 3
+}
+
 banner() {
   echo "═══════════════════════════════════════════════════════"
   echo "  LIMITLESS STACK — ROLL CALL"
@@ -204,6 +298,10 @@ banner() {
 
 banner
 echo ""
+
+# Gate BEFORE any check runs. If the machine is offline, nothing below can be
+# evaluated and pretending otherwise produces a stack-wide false alarm.
+if ! network_probe; then network_abort "at start"; fi
 
 # ── [1/7] Claude ────────────────────────────────────────
 echo "[1/7] Claude (reasoning engine)"
@@ -1139,6 +1237,13 @@ echo ""
 # never scrape the human-readable "  - msg  →  fix" lines. Each warning/blocker
 # is the same "msg  →  fix" string the console prints, so a consumer gets an
 # identical findings list without depending on console formatting.
+# Re-probe BEFORE committing a verdict. The 2026-07-27 drop happened MID-RUN —
+# pass 1 completed clean and the network died before pass 2 — so an up-front
+# check alone would still let a run that started healthy and ended offline
+# publish its manufactured failures. If the network went away while we were
+# working, this run is indeterminate no matter what the counters say.
+if ! network_probe; then network_abort "mid-run, before verdict"; fi
+
 if [ -n "$FINDINGS_OUT" ]; then
   if   [ "$RED" -gt 0 ];    then FVERDICT="block"
   elif [ "$YELLOW" -gt 0 ]; then FVERDICT="warn"

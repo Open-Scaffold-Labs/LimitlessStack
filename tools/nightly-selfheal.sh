@@ -180,7 +180,11 @@ PASS=$((PASS+1))
 START_RC=$PF_RC
 log "pass $PASS: verdict rc=$PF_RC (green=$PF_GREEN yellow=$PF_YELLOW red=$PF_RED src=$PF_SOURCE)"
 
-while [ "$PF_RC" -ne 0 ] && [ "$PASS" -lt "$MAX_PASSES" ]; do
+# rc=3 (no network) short-circuits the loop: there is nothing to correct, and a
+# corrector that needs the network would only fail and pollute the log. Retrying
+# passes here is also how a single drop got amplified into three broken verdicts
+# on 2026-07-27.
+while [ "$PF_RC" -ne 0 ] && [ "$PF_RC" -ne 3 ] && [ "$PASS" -lt "$MAX_PASSES" ]; do
   PLAN="$(plan_correctors "$PF_FINDINGS")"
   if [ -z "$PLAN" ]; then
     log "  no deterministic corrector applies to residual findings — stopping (human-gated)"
@@ -212,6 +216,12 @@ done
 case "$PF_RC" in
   0) VERDICT="ready" ;;
   1) VERDICT="warn"  ;;
+  # rc=3 — the preflight found no working network and evaluated NOTHING (added
+  # 2026-07-27). This is not a verdict about the stack and must never become a
+  # block: on 2026-07-27 a mid-run DNS drop produced red=2/yellow=12 that looked
+  # like fourteen problems and was one, and the same checks were green three
+  # hours later. Recorded and left alone — no correctors, no needs_human.
+  3) VERDICT="indeterminate" ;;
   *) VERDICT="block" ;;
 esac
 HEALED="false"
@@ -240,12 +250,22 @@ fi
 ACTIONABLE_N=$(printf '%s\n' "$RESIDUAL_ACTIONABLE" | grep -c . || echo 0)
 NEEDS_HUMAN="false"
 if [ "$VERDICT" = "block" ] || [ -n "$RESIDUAL_ACTIONABLE" ]; then NEEDS_HUMAN="true"; fi
+# An indeterminate run evaluated nothing, so it has no findings to escalate and
+# nothing a human could act on. Waking someone to tell them the laptop's wifi
+# dropped at 4am is the cry-wolf failure this whole guard exists to remove.
+if [ "$VERDICT" = "indeterminate" ]; then NEEDS_HUMAN="false"; RESIDUAL_ACTIONABLE=""; ACTIONABLE_N=0; fi
 
 # Dedup corrector list.
 UNIQ_CORR="$(printf '%s\n' "${CORRECTORS_RUN[@]:-}" | sort -u | grep -v '^$' | paste -sd, - 2>/dev/null)"
 
 # Build a title for the activity heartbeat / escalation row.
-if [ "$VERDICT" = "ready" ] && [ "$HEALED" = "true" ]; then
+# Indeterminate FIRST — before the needs_human=false branch below, which would
+# otherwise title a run that evaluated nothing as "READY*". Reporting ready when
+# no check ran is the inverse of the cry-wolf failure and is worse: a false green
+# is believed, a false red is eventually investigated.
+if [ "$VERDICT" = "indeterminate" ]; then
+  TITLE="nightly self-heal: INDETERMINATE — no network, nothing evaluated (no action)"
+elif [ "$VERDICT" = "ready" ] && [ "$HEALED" = "true" ]; then
   TITLE="nightly self-heal: HEALED → READY (${UNIQ_CORR:-none})"
 elif [ "$VERDICT" = "ready" ]; then
   TITLE="nightly self-heal: READY (${PF_GREEN} green)"
