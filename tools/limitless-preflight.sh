@@ -717,6 +717,29 @@ begin_tool "notebook" "NotebookLM" "Research"
 if ! command -v notebooklm >/dev/null 2>&1; then
   bad "notebooklm CLI not installed" "pip install \"notebooklm-py[browser]\" && playwright install chromium && notebooklm login"
 else
+  # CLI version staleness — a stale notebooklm-py cannot complete Google's auth
+  # handshake and then reports "auth failing", masking the true cause (a version
+  # gap, not a bad login). Observed 2026-07-31: 0.3.4 installed vs 0.7.3 latest →
+  # token_fetch failed with a WebLiteSignIn redirect; two clean logins could not
+  # fix it, the upgrade did. Checked BEFORE auth so the fix hint points at the
+  # real cause. Network-tolerant: silently skips if PyPI is unreachable.
+  NBLM_STALE=0
+  NBLM_INSTALLED=$(notebooklm --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+  NBLM_LATEST=$(curl -s --max-time 5 https://pypi.org/pypi/notebooklm-py/json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['version'])" 2>/dev/null)
+  if [ -n "$NBLM_INSTALLED" ] && [ -n "$NBLM_LATEST" ]; then
+    if [ "$NBLM_INSTALLED" = "$NBLM_LATEST" ]; then
+      ok "notebooklm CLI up to date ($NBLM_INSTALLED)"
+    else
+      # Only warn when installed actually sorts OLDER than latest (never on a
+      # local dev build that's ahead of PyPI).
+      NBLM_OLDER=$(printf '%s\n%s\n' "$NBLM_INSTALLED" "$NBLM_LATEST" | sort -V | head -1)
+      if [ "$NBLM_OLDER" = "$NBLM_INSTALLED" ]; then
+        NBLM_STALE=1
+        warn "notebooklm CLI $NBLM_INSTALLED is behind latest $NBLM_LATEST — a stale CLI reports auth failures that are really a version gap" "pip3.11 install --upgrade notebooklm-py && notebooklm skill install"
+      fi
+    fi
+  fi
+
   AUTH_OUT=$(notebooklm auth check --test 2>&1)
   # Transient token-fetch failures happen (observed 2026-06-10: BLOCK at 04:40,
   # auth valid on the next check) — retry once before declaring a blocker.
@@ -728,7 +751,11 @@ else
   if echo "$AUTH_OUT" | grep -q "Authentication Check" && ! echo "$AUTH_OUT" | grep -q "fail"; then
     ok "auth OK (storage_state.json valid, token fetch works)"
   elif echo "$AUTH_OUT" | grep -q "fail"; then
-    bad "NotebookLM auth failing" "invoke Skill(notebooklm), then notebooklm login — do NOT try in the sandbox"
+    if [ "$NBLM_STALE" -eq 1 ]; then
+      bad "NotebookLM auth failing — CLI is stale ($NBLM_INSTALLED < $NBLM_LATEST), the LIKELY cause" "pip3.11 install --upgrade notebooklm-py && notebooklm skill install && notebooklm login — the version gap breaks Google's auth handshake; upgrade BEFORE re-logging in (2026-07-31)"
+    else
+      bad "NotebookLM auth failing" "invoke Skill(notebooklm), then notebooklm login — do NOT try in the sandbox"
+    fi
   else
     warn "auth check output unparseable" "notebooklm auth check --test · invoke Skill(notebooklm) if unclear"
   fi
