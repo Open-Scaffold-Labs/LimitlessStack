@@ -28,6 +28,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -300,6 +301,28 @@ def cmd_refresh(source_id: str) -> bool:
     return result.returncode == 0
 
 
+def source_present(source_id: str) -> bool:
+    """Is `source_id` in the ACTIVE notebook right now?
+
+    Deliberately fails CLOSED — returns True when the listing can't be read or
+    parsed. Callers use this to decide whether a state entry is stale enough to
+    delete, and "I couldn't tell" must never be enough to discard bookkeeping for
+    a source that may well be live.
+    """
+    r = run_nb(["source", "list", "--json"])
+    if r.returncode != 0:
+        return True
+    try:
+        data = json.loads(r.stdout)
+        sources = data if isinstance(data, list) else data.get("sources", [])
+    except Exception:
+        return True
+    return any(
+        (s.get("id") or s.get("source_id") or "").startswith(source_id)
+        for s in sources
+    )
+
+
 def cmd_delete(source_id: str) -> bool:
     """Delete a source and VERIFY it's gone. Returns True ONLY if the source
     existed before the call AND is gone after. Distinguishes between "really
@@ -387,6 +410,15 @@ def _extract_content(remote_text: str) -> str:
         ln.startswith("Matched:") or ln.startswith("Source:")
         or ln.startswith("Title:") or ln.startswith("Characters:")
         or ln.startswith("Saved ") or ln.startswith("Error:")
+        # notebooklm-py 0.7.3 (installed 2026-07-31 16:26) BROKE the "-o writes
+        # pure content" contract this function's docstring relies on: it now
+        # emits a long rule of dashes before the body. Nothing here recognised
+        # it, so the rule and everything framed by it stayed in the "content".
+        # This is the SAME class as f67ce20 (2026-07-11), which taught check_caps
+        # about a 'Matched:' preamble — the CLI keeps changing its output shape
+        # and we keep parsing it by hardcoded prefix. Matching a dash-rule by
+        # shape rather than by exact string so the next variant does not break us.
+        or (len(ln.strip()) >= 8 and set(ln.strip()) <= {"-", "=", "_"})
     )]
     return "\n".join(keep)
 
@@ -456,9 +488,23 @@ def cmd_verify_content(source_id: str, path: Path, wait_retries: int = 5) -> boo
     all-table page), fall back to whole-file markers — no worse than the
     pre-fix behavior for that rare case.
 
-    Polls with backoff (2,4,8,16,30s) to let indexing complete.
+    Polls with backoff to let indexing complete.
+
+    ⚠ BUDGET WIDENED 2026-08-01. The old schedule was [2,4,8,16,30] with
+    wait_retries=5 — and because the sleep happens BEFORE each retry, the last
+    delay was never reached, so the real budget was 2+4+8+16 = **30 seconds**.
+    notebooklm-py was upgraded to 0.7.3 on Jul 31 16:26; the very next refresh
+    (17:43) returned verify_failed on 5 of 5 files, and the following one failed
+    again. Proven false negatives: the uploads had SUCCEEDED — the same markers
+    that failed in-run scored 5/5 when re-checked ~30 min later, the remote
+    fulltext contained every new string, and a live query answered from the new
+    content. 0.7.3 changed the timing between "upload returns" and "content is
+    retrievable"; the old budget was tuned to the previous behaviour.
+
+    Not size-related: the failures spanned 8KB to 259KB. Not a stale source_id
+    either: state and notebook ids matched.
     """
-    delays = [2, 4, 8, 16, 30]
+    delays = [3, 7, 15, 30, 60, 90, 120]
     local_text = path.read_text()
     prose_norm = _strip_for_compare(_prose_lines(local_text))
     # Prefer prose markers; fall back to whole-file only when prose is too thin.
@@ -473,6 +519,15 @@ def cmd_verify_content(source_id: str, path: Path, wait_retries: int = 5) -> boo
             return True
     else:
         # Five markers at 20%, 40%, 60%, 80%, 95% of the file.
+        #
+        # REVERTED to the original five on 2026-08-01. I had widened this to nine
+        # while hunting the "everything is stale" outage, on the theory that the
+        # 3-of-5 threshold was too tight. That theory was WRONG — the real cause
+        # was the temp-file collision above — and widening it also LOOSENED the
+        # bar (5-of-9 = 56% vs 3-of-5 = 60%). Changing the pass criterion while
+        # chasing a bug means later "stale" verdicts get judged by a rule altered
+        # on a hunch, so it goes back. If sampling is genuinely too brittle, that
+        # deserves its own evidence and its own change.
         positions = [0.20, 0.40, 0.60, 0.80, 0.95]
         markers = []
         for pct in positions:
@@ -490,24 +545,103 @@ def cmd_verify_content(source_id: str, path: Path, wait_retries: int = 5) -> boo
     for attempt in range(wait_retries):
         if attempt > 0:
             time.sleep(delays[min(attempt - 1, len(delays) - 1)])
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False
-        ) as tf:
-            tmp_path = tf.name
+        # ── DO NOT PRE-CREATE THE TARGET FILE ────────────────────────────────
+        # ROOT CAUSE of the 2026-07-31/08-01 "everything is stale" outage.
+        # This used to be tempfile.NamedTemporaryFile(delete=False), which
+        # CREATES the file and then handed its path to `-o`. notebooklm-py 0.7.3
+        # (installed 2026-07-31 16:26) will NOT overwrite an existing file — it
+        # silently auto-renames, writing to "…tmpXXXX (2).txt" instead. So the
+        # CLI reported success ("Saved 6985 chars to /tmp/tmpyd2gryml (2).txt",
+        # returncode 0) while the tool read its own still-EMPTY temp file, hit
+        # the `st_size == 0 → continue` guard, exhausted every retry, and
+        # reported "source is stale".
+        #
+        # It failed on 100% of replaced sources regardless of size (8KB–259KB),
+        # with matching source_ids and content that was provably present — a
+        # pure false negative. Use a temp DIRECTORY and a path inside it that
+        # does not yet exist, so there is nothing for the CLI to collide with.
+        tmp_dir = tempfile.mkdtemp(prefix="nblm-verify-")
+        tmp_path = str(Path(tmp_dir) / "fulltext.txt")
         try:
             result = run_nb(["source", "fulltext", source_id, "-o", tmp_path])
             if result.returncode != 0:
                 continue
             tp = Path(tmp_path)
+            # Belt and braces: if the CLI still wrote somewhere else, believe the
+            # CLI over our assumption and read the path IT reports. Parsing its
+            # stdout is fragile, which is exactly why the empty-file case must
+            # never again be silently treated as "stale".
             if not tp.exists() or tp.stat().st_size == 0:
-                continue
+                m = re.search(r"Saved\s+\d+\s+chars?\s+to\s+(.+?)\s*$",
+                              result.stdout or "", re.MULTILINE)
+                alt = Path(m.group(1)) if m else None
+                if alt and alt.exists() and alt.stat().st_size > 0:
+                    tp = alt
+                else:
+                    # Could not READ the source. That is not evidence of staleness.
+                    print(f"    ⚠ verify could not read fulltext for {path.name} "
+                          f"(rc={result.returncode}, empty output) — treating as UNKNOWN, not stale")
+                    continue
             remote_text = _extract_content(tp.read_text())
             remote_norm = _strip_for_compare(remote_text)
             if _check_short(remote_norm):
                 return True
         finally:
-            Path(tmp_path).unlink(missing_ok=True)
+            # Remove the whole temp DIR (not just the file) — and anything the
+            # CLI may have auto-renamed into it, e.g. "fulltext (2).txt".
+            shutil.rmtree(tmp_dir, ignore_errors=True)
     return False
+
+
+_COLLIDING_BASENAMES: set[str] | None = None
+
+
+def colliding_basenames() -> set[str]:
+    """Basenames shared by more than one file the tools mirror.
+
+    NotebookLM identifies a source only by title, and cmd_add titles uploads by
+    FILENAME — so two vault files with the same basename are indistinguishable
+    once uploaded. `_claim_unique_title` deletes every OTHER source sharing a
+    title, which means for a colliding basename the two files cannibalise each
+    other: whichever syncs last deletes the other's source.
+
+    Proven, not theoretical: wiki/index.md and wiki/app-creation-reminders/
+    index.md both title as "index.md". The live index.md in cdaa7a43 was created
+    2026-07-31T16:57:20 and app-creation-reminders/index.md's tracked source_id
+    (7bbdf431) has been absent ever since — the sweep ate it.
+
+    The real fix is path-derived titles, which would mean re-seeding every
+    notebook's title→id mapping. Until then the sweep declines to act on a
+    colliding basename: leaving a suspected duplicate in place is recoverable,
+    deleting a distinct file's only source is not.
+    """
+    global _COLLIDING_BASENAMES
+    if _COLLIDING_BASENAMES is None:
+        # Scope collisions PER NOTEBOOK. The sweep only ever lists the active
+        # notebook, so two files sharing a basename are only ambiguous if they
+        # land in the SAME notebook. Counting vault-wide instead flags four
+        # false positives — claude-anti-patterns.md, limitless-stack.md,
+        # paperclip.md and limitless-stack-hub.md are each ONE file mirrored into
+        # both the default bucket and the reminder notebook, where a same-title
+        # source really is a ghost. Disabling the sweep for those would reopen
+        # the 2026-04-29 duplicate hole it was written to close.
+        collisions: set[str] = set()
+        buckets = {label: [p.name for p in paths] for label, paths in plan_routing().items()}
+        buckets["__reminder__"] = [
+            reminder_title_for(rel, Path(rel).name) for rel in REMINDER_FILES
+        ]
+        for names in buckets.values():
+            counts: dict[str, int] = {}
+            for n in names:
+                counts[n] = counts.get(n, 0) + 1
+            collisions |= {n for n, c in counts.items() if c > 1}
+        _COLLIDING_BASENAMES = collisions
+        if _COLLIDING_BASENAMES:
+            print(f"  ! ghost-dupe sweep DISABLED for ambiguous titles: "
+                  f"{', '.join(sorted(_COLLIDING_BASENAMES))} "
+                  f"(same basename, same notebook — a same-title source may be a "
+                  f"different file)")
+    return _COLLIDING_BASENAMES
 
 
 def _claim_unique_title(title: str, keep_sid: str) -> int:
@@ -527,6 +661,14 @@ def _claim_unique_title(title: str, keep_sid: str) -> int:
     handles the case where the API silently lied about the delete being
     visible. See anti-pattern #12 for the full failure mode.
     """
+    # Refuse to sweep an ambiguous title — see colliding_basenames(). A "dupe"
+    # under a shared basename is far more likely to be a DIFFERENT file's only
+    # source than a ghost of this one.
+    if title in colliding_basenames():
+        print(f"    ! ghost-dupe sweep SKIPPED for {title} — basename is shared by "
+              f"more than one mirrored file, so a same-title source may not be a dupe")
+        return 0
+
     listing = run_nb(["source", "list", "--json"])
     if listing.returncode != 0:
         return 0
@@ -551,15 +693,44 @@ def _claim_unique_title(title: str, keep_sid: str) -> int:
     return swept
 
 
-def cmd_replace(path: Path, old_source_id: str | None) -> tuple[str | None, bool]:
+def cmd_replace(path: Path, old_source_id: str | None) -> tuple[str | None, bool, bool]:
     """Replace a source's content: delete the old one (if any), add the new
     file, and verify the content actually landed in NotebookLM.
 
-    Returns (new_source_id, verified). A non-None source_id with verified=False
-    means the upload succeeded but the content check failed — almost always
-    means NotebookLM hasn't finished indexing within the wait window. The
-    caller should treat verified=False as a failure mode and either retry
-    or flag it prominently.
+    Returns (new_source_id, verified, old_gone) — `old_gone` meaning the old
+    source is no longer in the notebook, so its state entry is invalid.
+
+    A non-None source_id with verified=False means the upload succeeded but the
+    content check failed — almost always means NotebookLM hasn't finished
+    indexing within the wait window. The caller should treat verified=False as a
+    failure mode and either retry or flag it prominently.
+
+    ⚠ `old_gone` EXISTS BECAUSE THIS FUNCTION CAN LOSE DATA (added 2026-08-01).
+    Step 1 deletes the old source BEFORE step 2 adds the new one. If the add then
+    fails, the old source is GONE and there is no new one — permanent loss of that
+    source from the notebook. Until 2026-08-01 both that case and the harmless
+    "aborted before deleting anything" case returned a bare (None, False), so the
+    caller counted an ordinary `upload_failed` and LEFT THE STATE ENTRY POINTING AT
+    THE DELETED ID. State then reported the source present forever, the mtime
+    shortcut marked it "unchanged" on every subsequent run, and nothing ever
+    retried it. That is how 7 sources vanished from cdaa7a43 with state still
+    asserting them — 5 in a single run on 2026-07-14 09:06 EDT (a=0 r=0 u=44 uf=8:
+    five attempted replaces, five failures, five destroyed sources), the rest in
+    the uf>0 runs of 07-16 and 07-23.
+
+    So the two failure modes are now distinguishable and MUST be handled
+    differently by callers:
+      * (None, False, False) — nothing was removed; the old source is still live.
+        Keep the state entry; the next run retries.
+      * (None, False, True)  — the old source is not in the notebook and the
+        re-add failed. The caller MUST drop the state entry so the next run
+        treats it as a fresh add.
+
+    Within that second case this function distinguishes, in its own output, a
+    source THIS run deleted (real loss — "SOURCE LOST") from one that was already
+    missing before the call (a pre-existing orphan). Both invalidate the entry;
+    only the first is new damage. Don't collapse them in log lines — 6 of the
+    current orphans are the second kind and would cry wolf every night.
 
     Triple-defended against ghost duplicates:
       1. cmd_delete's own pre/post-check (existed before).
@@ -567,6 +738,8 @@ def cmd_replace(path: Path, old_source_id: str | None) -> tuple[str | None, bool
       3. _claim_unique_title sweep AFTER successful add (added 2026-04-29
          after observing the eventual-consistency window bypass guards 1+2).
     """
+    old_gone = False
+    we_deleted_it = False
     # Step 1: delete the old source if we have one, then VERIFY it's gone.
     # cmd_delete returns False both for "delete failed" AND "source didn't
     # exist before" — those need different handling here. If the old source
@@ -574,7 +747,14 @@ def cmd_replace(path: Path, old_source_id: str | None) -> tuple[str | None, bool
     # duplicate (this was the actual mechanism that produced the 9
     # duplicates discovered in cdaa7a43 on 2026-04-26). Abort instead.
     if old_source_id:
-        cmd_delete(old_source_id)
+        # Keep the bool: cmd_delete returns True ONLY if the source existed
+        # before AND is gone after. That is the difference between "we just
+        # removed a live source" (a failed add from here is real data loss) and
+        # "state named a source that was already missing" (the add failing leaves
+        # things exactly as bad as it found them). Both mean the entry is stale,
+        # but only the first is a loss caused by this run — and mislabelling the
+        # second as loss would cry wolf on all 6 pre-existing orphans.
+        we_deleted_it = cmd_delete(old_source_id)
         # Settle delay: NotebookLM's source list has a ~1-2s eventual-
         # consistency window after a delete where the deleted source may
         # still appear (or, more dangerously, may temporarily NOT appear
@@ -595,18 +775,39 @@ def cmd_replace(path: Path, old_source_id: str | None) -> tuple[str | None, bool
                 )
                 if still_there:
                     print(f"    ✗ delete didn't take — old source {old_source_id[:12]}… still present, aborting to avoid duplicate")
-                    return None, False
+                    return None, False, False
             except Exception:
                 # If we can't parse the listing we can't be sure either way.
                 # Conservative move: don't add. Caller treats this as a
                 # failure and won't update state, so we'll retry next run.
+                # Reported as old_destroyed=False: if the delete DID land, the
+                # next run's replace finds the id already gone, confirms it, and
+                # adds — so keeping the entry self-heals, while wrongly dropping
+                # it would strand a live source as untracked.
                 print(f"    ✗ couldn't verify post-delete state, aborting to avoid duplicate")
-                return None, False
+                return None, False, False
+        # Past this point the old source is confirmed absent from the notebook.
+        old_gone = True
 
     # Step 2: add the new file.
+    #
+    # DELIBERATELY A SINGLE ATTEMPT. I briefly added a 3x retry here and took it
+    # back out: the add failure at the cap is a CLI *parse* failure ("Failed to
+    # get SOURCE_ID from registration response"), which means the upload may have
+    # partially registered. Retrying a possibly-successful add is precisely how
+    # the nine duplicates appeared in cdaa7a43 on 2026-04-26, and it would bypass
+    # the abort-rather-than-duplicate rule that steps 1/4 exist to enforce. If a
+    # retry is ever wanted here it must first re-list and adopt an existing
+    # same-title source, never blind-add.
     new_sid = cmd_add(path)
     if not new_sid:
-        return None, False
+        if we_deleted_it:
+            print(f"    ✗✗ SOURCE LOST — deleted {old_source_id[:12]}… then the re-add of "
+                  f"{path.name} failed. The notebook no longer has this source.")
+        elif old_gone:
+            print(f"    ✗ stale entry — {old_source_id[:12]}… was already missing from the "
+                  f"notebook and the re-add failed (at the source cap?)")
+        return None, False, old_gone
 
     # Step 3: verify content actually indexed.
     verified = cmd_verify_content(new_sid, path)
@@ -619,32 +820,75 @@ def cmd_replace(path: Path, old_source_id: str | None) -> tuple[str | None, bool
     if ghosts > 0:
         print(f"    ! ghost-dupe sweep removed {ghosts} stale copy/copies of {path.name}")
 
-    return new_sid, verified
+    return new_sid, verified, old_gone
 
 
-def heal_verify(path: Path, sid: str | None, attempts: int = 2) -> tuple[str | None, bool]:
+def heal_verify(path: Path, sid: str | None, attempts: int = 2) -> tuple[str | None, bool, bool]:
     """Auto-heal a content-verify failure. After an initial verify miss, retry
     the delete+re-add+verify cure (cmd_replace) up to `attempts` times. This
     automates the previously-MANUAL cure documented in the vault CLAUDE.md
     end-of-session step 7 / anti-pattern #12 — turning the sync's verify-ONLY
     loop into verify→correct (the loop-engineering "self-correct" piece).
 
-    cmd_replace deletes the current source BEFORE re-adding, so this never grows
-    the notebook's source count — safe even against the 50-source cap. Returns
-    (source_id, verified): the freshest source_id and whether content finally
-    verified. On an exhausted budget it returns verified=False and the caller
-    records verify_failed exactly as it did before this heal existed."""
+    Returns (source_id, verified, destroyed).
+
+    ⚠ CORRECTED 2026-08-01. This docstring used to claim cmd_replace "deletes the
+    current source BEFORE re-adding, so this never grows the notebook's source
+    count — safe even against the 50-source cap." The premise is right and the
+    conclusion is backwards: deleting first means it cannot grow the count, but it
+    CAN shrink it to zero for that source. At the cap, adds fail — so a heal that
+    deletes and then cannot re-add destroys the source outright. Worse, the old
+    loop left `cur` pointing at the sid it had just deleted, so the caller wrote
+    that dead id into state and recorded a routine verify_failed. Never grows ≠
+    safe. `destroyed=True` now propagates so callers drop the state entry instead
+    of enshrining a dead id."""
     cur = sid
+
+    # ── BE PATIENT BEFORE BEING CLEVER (added 2026-08-01) ────────────────────
+    # The heal below re-uploads, and a re-upload RESTARTS INDEXING — so when the
+    # only problem is that indexing has not finished yet, the cure guarantees the
+    # disease: attempt 1 restarts the clock and fails, attempt 2 restarts it again
+    # and fails, and the run reports verify_failed having spent three uploads of
+    # quota to arrive there. That is exactly what happened on 2026-07-31/08-01
+    # after notebooklm-py 0.7.3 slowed the upload→retrievable gap: 6 of 6 replaced
+    # files "failed", every one of them actually fine.
+    #
+    # So: re-verify PATIENTLY first, with no upload at all. If the content is
+    # merely un-indexed, this fixes it for free. Only if a patient check still
+    # fails do we reach the delete+re-add cure — which is the genuinely-stale-
+    # source case heal_verify was written for (anti-pattern #12), and is left
+    # exactly as it was.
+    if cur:
+        print(f"    … patient re-verify for {path.name} (no re-upload) — indexing may still be catching up")
+        if cmd_verify_content(cur, path, wait_retries=7):
+            print(f"    ✓ verified on the patient re-check — no re-upload needed")
+            return cur, True, False
+
+    ever_destroyed = False
     for i in range(1, attempts + 1):
         print(f"    ↻ auto-heal {i}/{attempts} for {path.name} — re-add + re-verify")
-        new_sid, verified = cmd_replace(path, cur)
+        new_sid, verified, destroyed = cmd_replace(path, cur)
+        if destroyed:
+            # The cure deleted the source. Remember it for the whole call: even if
+            # a later attempt succeeds we must not report the pre-delete sid, and
+            # if none succeeds the caller has to know the notebook lost the file.
+            ever_destroyed = True
         if new_sid:
             cur = new_sid
+        elif destroyed:
+            # Nothing left in the notebook under the old id. Drop it so the next
+            # attempt is a PURE add (cmd_replace skips its delete step when
+            # old_source_id is None) — that keeps the remaining retry budget
+            # usable without any duplicate risk, instead of re-deleting nothing.
+            cur = None
         if verified:
             print(f"    ✓ auto-healed on attempt {i}/{attempts}")
-            return cur, True
+            return cur, True, False
+    if ever_destroyed and not cur:
+        print(f"    ✗ auto-heal exhausted and the source is GONE from the notebook")
+        return None, False, True
     print(f"    ✗ auto-heal exhausted after {attempts} attempts — surfacing verify_failed")
-    return cur, False
+    return cur, False, False
 
 
 # ── Routing: bucket wiki files by route ───────────────────────────────────
@@ -736,7 +980,26 @@ def sync_route(notebook_id: str, label: str, display: str, files: list[Path], dr
     new_state = dict(state)
 
     added = refreshed = deleted = unchanged = 0
-    verify_failed = upload_failed = 0
+    verify_failed = upload_failed = dropped_count = 0
+
+    # ── PERSIST AFTER EVERY MUTATION (added 2026-08-01) ──────────────────────
+    # This used to accumulate everything in `new_state` and call save_state ONCE
+    # after the whole loop. Every uploaded source_id therefore lived only in
+    # memory for the length of the run, while the deletes and uploads had already
+    # landed in NotebookLM. Any interruption — kill, timeout, exception in the
+    # delete loop — discarded the entire run's bookkeeping and left state
+    # pointing at source_ids that cmd_replace had already deleted.
+    #
+    # That is exactly what happened on 2026-07-27 between 16:58:07 and 17:00:27:
+    # nine sources were uploaded to cdaa7a43, the run stopped before save_state,
+    # and to this day six state entries name deleted ids while four of the
+    # uploaded sources are in the notebook tracked by nothing at all. There is no
+    # wiki-state commit on 07-27 at all.
+    #
+    # A partial run must leave partially-correct state, never stale state.
+    def _checkpoint() -> None:
+        if not dry_run:
+            save_state(state_path, new_state)
 
     # Files on disk + routed here
     for rel, path in current_files.items():
@@ -755,9 +1018,9 @@ def sync_route(notebook_id: str, label: str, display: str, files: list[Path], dr
             # sources — see cmd_refresh() docstring and wiki/log.md 2026-04-24.
             print(f"  [{display}] ~ replace {rel}")
             if not dry_run:
-                sid, verified = cmd_replace(path, entry["source_id"])
+                sid, verified, destroyed = cmd_replace(path, entry["source_id"])
                 if sid and not verified:
-                    sid, verified = heal_verify(path, sid)
+                    sid, verified, destroyed = heal_verify(path, sid)
                 now_ts = time.time()
                 if sid and verified:
                     new_state[rel] = {
@@ -775,9 +1038,24 @@ def sync_route(notebook_id: str, label: str, display: str, files: list[Path], dr
                     }
                     verify_failed += 1
                     print(f"    ⚠ uploaded but CONTENT NOT VERIFIED — check notebook manually")
-                else:
+                elif destroyed:
+                    # The old source was deleted and could not be re-added: the
+                    # notebook has LOST this file. Drop the entry rather than
+                    # keeping a dead source_id — a state entry that names a
+                    # deleted id is worse than no entry, because the mtime
+                    # shortcut then reports the file "unchanged" on every future
+                    # run and it is never retried. Dropping it makes the next run
+                    # treat this as a fresh add.
+                    new_state.pop(rel, None)
+                    dropped_count += 1
                     upload_failed += 1
-                    print(f"    ✗ REPLACE FAILED — {rel} is no longer in the notebook")
+                    print(f"    → state entry dropped for {rel} (source not in notebook) — next run re-adds it")
+                else:
+                    # Nothing was deleted; the old source is still live. Keep the
+                    # entry so the next run retries the replace.
+                    upload_failed += 1
+                    print(f"    ✗ REPLACE FAILED — {rel} left as-is in the notebook")
+                _checkpoint()
             else:
                 refreshed += 1
         else:
@@ -792,9 +1070,20 @@ def sync_route(notebook_id: str, label: str, display: str, files: list[Path], dr
                     ghosts = _claim_unique_title(path.name, sid)
                     if ghosts > 0:
                         print(f"    ! ghost-dupe sweep removed {ghosts} stale copy/copies of {rel}")
+                    destroyed = False
                     if not verified:
-                        sid, verified = heal_verify(path, sid)
+                        sid, verified, destroyed = heal_verify(path, sid)
                     now_ts = time.time()
+                    if not sid:
+                        # heal_verify's cure deleted the just-added source and
+                        # could not put it back. Record nothing — an entry with
+                        # source_id=None would break every later run.
+                        new_state.pop(rel, None)
+                        dropped_count += 1
+                        upload_failed += 1
+                        print(f"    → nothing recorded for {rel} (source not in notebook) — next run re-adds it")
+                        _checkpoint()
+                        continue
                     entry_new = {"mtime": mtime, "source_id": sid}
                     if verified:
                         entry_new["verified_at"] = now_ts
@@ -805,6 +1094,7 @@ def sync_route(notebook_id: str, label: str, display: str, files: list[Path], dr
                         new_state[rel] = entry_new
                         verify_failed += 1
                         print(f"    ⚠ uploaded but CONTENT NOT VERIFIED")
+                    _checkpoint()
                 else:
                     upload_failed += 1
                     print(f"    ✗ ADD FAILED for {rel}")
@@ -816,18 +1106,35 @@ def sync_route(notebook_id: str, label: str, display: str, files: list[Path], dr
         if rel not in current_files:
             print(f"  [{display}] - delete {rel}")
             if not dry_run:
-                if cmd_delete(state[rel]["source_id"]):
+                sid = state[rel]["source_id"]
+                if cmd_delete(sid):
                     del new_state[rel]
                     deleted += 1
+                    _checkpoint()
+                elif not source_present(sid):
+                    # cmd_delete returns False for "delete failed" AND for
+                    # "source was never there" — and the old code kept the entry
+                    # in both cases. So a state entry naming an already-deleted
+                    # source could NEVER be cleaned up by a prune: the entry
+                    # outlived the source forever. That is why the three June
+                    # handoffs pruned on 2026-07-14 still had state entries on
+                    # 2026-08-01 asserting they were in the notebook.
+                    # Nothing to delete means the entry is simply stale — drop it.
+                    del new_state[rel]
+                    dropped_count += 1
+                    print(f"    → stale entry dropped ({sid[:12]}… was already absent)")
+                    _checkpoint()
+                else:
+                    print(f"    ✗ delete FAILED for {rel} — source still present, entry kept")
             else:
                 deleted += 1
 
-    if not dry_run:
-        save_state(state_path, new_state)
+    _checkpoint()
     summary = (f"[{display}] DONE  added: {added}  refreshed: {refreshed}  "
                f"deleted: {deleted}  unchanged: {unchanged}  "
                f"verify_failed: {verify_failed}  upload_failed: {upload_failed}  "
-               f"dry_run: {dry_run}")
+               f"dry_run: {dry_run}"
+               + (f"  ⚠ stale entries dropped: {dropped_count}" if dropped_count else ""))
     print(summary)
 
     # Report this route's sync to /api/agent-activity. Best-effort, skipped on
@@ -840,13 +1147,18 @@ def sync_route(notebook_id: str, label: str, display: str, files: list[Path], dr
                 title = (f"notebooklm {display} — "
                          f"{added} added · {refreshed} refreshed · {deleted} deleted"
                          + (f" · {verify_failed} verify_failed" if verify_failed else "")
-                         + (f" · {upload_failed} upload_failed" if upload_failed else ""))
+                         + (f" · {upload_failed} upload_failed" if upload_failed else "")
+                         + (f" · {dropped_count} stale_dropped" if dropped_count else ""))
                 payload = json.dumps({
                     "route":         label,
                     "notebook_id":   notebook_id,
                     "added":         added, "refreshed": refreshed, "deleted": deleted,
                     "unchanged":     unchanged,
                     "verify_failed": verify_failed, "upload_failed": upload_failed,
+                    # Recorded separately from upload_failed so this is greppable
+                    # in lsh_activity. Reconstructing the 2026-07-14 loss required
+                    # inferring destroyed sources from (refreshed=0, upload_failed=8).
+                    "stale_dropped": dropped_count,
                     "force":         force,
                 })
                 subprocess.run(
@@ -930,7 +1242,13 @@ def sync_reminder(dry_run: bool, force: bool = False) -> None:
     activate_notebook(REMINDER_NOTEBOOK_ID)
     new_state = dict(state)
     refreshed = added = unchanged = missing_on_disk = 0
-    verify_failed = upload_failed = 0
+    verify_failed = upload_failed = dropped_count = 0
+
+    # Checkpoint after every mutation — see the long note in sync_route. The
+    # reminder bucket has the same write-after-mutate window.
+    def _checkpoint() -> None:
+        if not dry_run:
+            save_reminder_state(new_state)
 
     for path in iter_reminder_files():
         rel = path.relative_to(VAULT).as_posix()
@@ -943,9 +1261,9 @@ def sync_reminder(dry_run: bool, force: bool = False) -> None:
             # Replace: delete old + add new + verify. See cmd_refresh docstring.
             print(f"  [reminder] ~ replace {rel}")
             if not dry_run:
-                sid, verified = cmd_replace(path, entry["source_id"])
+                sid, verified, destroyed = cmd_replace(path, entry["source_id"])
                 if sid and not verified:
-                    sid, verified = heal_verify(path, sid)
+                    sid, verified, destroyed = heal_verify(path, sid)
                 now_ts = time.time()
                 if sid and verified:
                     new_state[rel] = {
@@ -958,9 +1276,15 @@ def sync_reminder(dry_run: bool, force: bool = False) -> None:
                     new_state[rel] = {"mtime": mtime, "source_id": sid}
                     verify_failed += 1
                     print(f"    ⚠ uploaded but CONTENT NOT VERIFIED — check notebook manually")
+                elif destroyed:
+                    new_state.pop(rel, None)
+                    dropped_count += 1
+                    upload_failed += 1
+                    print(f"    → state entry dropped for {rel} (source not in notebook) — next run re-adds it")
                 else:
                     upload_failed += 1
-                    print(f"    ✗ REPLACE FAILED — {rel} is no longer in the notebook")
+                    print(f"    ✗ REPLACE FAILED — {rel} left as-is in the notebook")
+                _checkpoint()
             else:
                 refreshed += 1
         else:
@@ -977,9 +1301,17 @@ def sync_reminder(dry_run: bool, force: bool = False) -> None:
                     ghosts = _claim_unique_title(path.name, sid)
                     if ghosts > 0:
                         print(f"    ! ghost-dupe sweep removed {ghosts} stale copy/copies of {rel}")
+                    destroyed = False
                     if not verified:
-                        sid, verified = heal_verify(path, sid)
+                        sid, verified, destroyed = heal_verify(path, sid)
                     now_ts = time.time()
+                    if not sid:
+                        new_state.pop(rel, None)
+                        dropped_count += 1
+                        upload_failed += 1
+                        print(f"    → nothing recorded for {rel} (source not in notebook) — next run re-adds it")
+                        _checkpoint()
+                        continue
                     entry_new = {"mtime": mtime, "source_id": sid}
                     if verified:
                         entry_new["verified_at"] = now_ts
@@ -990,6 +1322,7 @@ def sync_reminder(dry_run: bool, force: bool = False) -> None:
                         new_state[rel] = entry_new
                         verify_failed += 1
                         print(f"    ⚠ uploaded but CONTENT NOT VERIFIED")
+                    _checkpoint()
                 else:
                     upload_failed += 1
                     print(f"    ✗ ADD FAILED for {rel}")
@@ -1130,6 +1463,68 @@ def check_caps(threshold: int = 47, cap: int = 50) -> int:
     return warnings
 
 
+def check_tracked(repair: bool = False) -> int:
+    """Assert every state entry names a source that actually exists.
+
+    THE INVARIANT THIS ENFORCES: for each bucket, every state entry's source_id
+    is present in that bucket's notebook. A tracked-but-absent entry is the worst
+    state the system can be in, because it is silent and self-perpetuating — the
+    mtime shortcut in sync_route reports the file "unchanged" on every run, so the
+    source is never re-uploaded and nothing ever notices it is gone.
+
+    That is not hypothetical. Seventeen entries were in this state on 2026-08-01:
+    three from a prune whose exclusions never reached the manifest (2026-07-14),
+    six replaced by a run whose state write was lost (2026-07-27), one eaten by
+    the basename ghost-dupe sweep (2026-07-31), and seven destroyed outright by
+    cmd_replace deleting before an add that then failed at the source cap
+    (2026-07-14 onwards). Every one of them was invisible for weeks. State said
+    the notebook had them; the notebook did not.
+
+    Prints one 'label<TAB>rel_path<TAB>source_id' line per absent entry and
+    returns the count, so the preflight can treat non-zero as RED.
+
+    With repair=True, drops each absent entry so the next refresh re-adds the
+    file. Repair is safe because the local file is the source of truth — worst
+    case the next run re-uploads content that was already correct.
+    """
+    buckets = plan_routing()
+    absent_total = 0
+    for label, paths in buckets.items():
+        if not paths:
+            continue
+        nbid, _, display = route_for_label(label)
+        state_path = state_file_for(label)
+        state = load_state(state_path)
+        if not state:
+            continue
+        r = run_nb(["source", "list", "--notebook", nbid, "--json"])
+        if r.returncode != 0:
+            print(f"source list failed for {display} ({nbid}): {r.stderr}", file=sys.stderr)
+            return -1
+        try:
+            out = r.stdout
+            starts = [i for i in (out.find("{"), out.find("[")) if i != -1]
+            data = json.loads(out[min(starts):])
+        except Exception as e:
+            print(f"source list JSON parse failed for {display}: {e}", file=sys.stderr)
+            return -1
+        sources = data if isinstance(data, list) else data.get("sources", [])
+        live_ids = {(s.get("id") or s.get("source_id")) for s in sources}
+        absent = [rel for rel, e in state.items()
+                  if e.get("source_id") not in live_ids]
+        for rel in absent:
+            print(f"{display}\t{rel}\t{state[rel].get('source_id')}")
+        absent_total += len(absent)
+        if repair and absent:
+            for rel in absent:
+                del state[rel]
+            save_state(state_path, state)
+            print(f"  → {display}: dropped {len(absent)} absent entr"
+                  f"{'y' if len(absent) == 1 else 'ies'}; next refresh re-adds "
+                  f"{'it' if len(absent) == 1 else 'them'}", file=sys.stderr)
+    return absent_total
+
+
 # ── Main ─────────────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser(
@@ -1157,6 +1552,17 @@ def main():
                              "Print orphans (one per line, ID<TAB>title) and exit. "
                              "Exit 0 if all known, 1 if N orphans, 2 on tool failure. "
                              "Used by tools/limitless-preflight.sh.")
+    parser.add_argument("--check-tracked", action="store_true",
+                        help="assert every state entry names a source that actually "
+                             "exists in its notebook. Print one "
+                             "'label<TAB>path<TAB>source_id' line per tracked-but-absent "
+                             "entry. Exit 0 clean, 1 if any absent, 2 on tool failure. "
+                             "This is the invariant whose absence let 17 sources go "
+                             "missing unnoticed for weeks — treat non-zero as RED.")
+    parser.add_argument("--repair-tracked", action="store_true",
+                        help="with --check-tracked, drop each absent entry so the next "
+                             "refresh re-adds the file (the local file is the source of "
+                             "truth, so the worst case is re-uploading correct content).")
     only_choices = ["wiki", "reminder", "all-projects"] + PROJECT_LABELS
     parser.add_argument("--only", choices=only_choices,
                         help="run only one route. 'wiki' = default bucket (cdaa7a43) only; "
@@ -1179,6 +1585,14 @@ def main():
     # --check-caps: same exit semantics as --check-coverage.
     if args.check_caps:
         n = check_caps()
+        if n < 0:
+            sys.exit(2)
+        sys.exit(0 if n == 0 else 1)
+
+    # --check-tracked: same exit semantics again. With --repair-tracked it also
+    # drops the absent entries, so a follow-up refresh re-adds the files.
+    if args.check_tracked:
+        n = check_tracked(repair=args.repair_tracked)
         if n < 0:
             sys.exit(2)
         sys.exit(0 if n == 0 else 1)
