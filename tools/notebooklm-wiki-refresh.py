@@ -779,83 +779,75 @@ def cmd_replace(path: Path, old_source_id: str | None) -> tuple[str | None, bool
          after observing the eventual-consistency window bypass guards 1+2).
     """
     old_gone = False
-    we_deleted_it = False
-    # Step 1: delete the old source if we have one, then VERIFY it's gone.
-    # cmd_delete returns False both for "delete failed" AND "source didn't
-    # exist before" — those need different handling here. If the old source
-    # is still present after delete, calling cmd_add would create a ghost
-    # duplicate (this was the actual mechanism that produced the 9
-    # duplicates discovered in cdaa7a43 on 2026-04-26). Abort instead.
-    if old_source_id:
-        # Keep the bool: cmd_delete returns True ONLY if the source existed
-        # before AND is gone after. That is the difference between "we just
-        # removed a live source" (a failed add from here is real data loss) and
-        # "state named a source that was already missing" (the add failing leaves
-        # things exactly as bad as it found them). Both mean the entry is stale,
-        # but only the first is a loss caused by this run — and mislabelling the
-        # second as loss would cry wolf on all 6 pre-existing orphans.
-        we_deleted_it = cmd_delete(old_source_id)
-        # Settle delay: NotebookLM's source list has a ~1-2s eventual-
-        # consistency window after a delete where the deleted source may
-        # still appear (or, more dangerously, may temporarily NOT appear
-        # before reappearing). Sleep before the post-check to reduce the
-        # false-"looks gone" rate. Belt-and-suspenders with the
-        # _claim_unique_title sweep below.
-        time.sleep(2)
-        # Re-check live state regardless of cmd_delete's bool. The CLI exits
-        # 0 in too many edge cases for the bool alone to be load-bearing.
-        check = run_nb(["source", "list", "--json"])
-        if check.returncode == 0:
-            try:
-                listing = json.loads(check.stdout)
-                live = listing if isinstance(listing, list) else listing.get("sources", [])
-                still_there = any(
-                    (s.get("id") or s.get("source_id") or "").startswith(old_source_id)
-                    for s in live
-                )
-                if still_there:
-                    print(f"    ✗ delete didn't take — old source {old_source_id[:12]}… still present, aborting to avoid duplicate")
-                    return None, False, False
-            except Exception:
-                # If we can't parse the listing we can't be sure either way.
-                # Conservative move: don't add. Caller treats this as a
-                # failure and won't update state, so we'll retry next run.
-                # Reported as old_destroyed=False: if the delete DID land, the
-                # next run's replace finds the id already gone, confirms it, and
-                # adds — so keeping the entry self-heals, while wrongly dropping
-                # it would strand a live source as untracked.
-                print(f"    ✗ couldn't verify post-delete state, aborting to avoid duplicate")
-                return None, False, False
-        # Past this point the old source is confirmed absent from the notebook.
-        old_gone = True
 
-    # Step 2: add the new file.
+    # ── ADD BEFORE DELETE (2026-08-03) ────────────────────────────────────
+    # This function used to delete the old source FIRST. That is what turned a
+    # source-cap failure into permanent data loss: at 50/50 the add fails, and
+    # the old source had already been destroyed. It cost 17 sources in the
+    # 07-26..29 window and is the root cause of the whole July incident — the
+    # title collision everyone chased afterwards was downstream of the repair.
     #
-    # DELIBERATELY A SINGLE ATTEMPT. I briefly added a 3x retry here and took it
-    # back out: the add failure at the cap is a CLI *parse* failure ("Failed to
-    # get SOURCE_ID from registration response"), which means the upload may have
-    # partially registered. Retrying a possibly-successful add is precisely how
-    # the nine duplicates appeared in cdaa7a43 on 2026-04-26, and it would bypass
-    # the abort-rather-than-duplicate rule that steps 1/4 exist to enforce. If a
-    # retry is ever wanted here it must first re-list and adopt an existing
-    # same-title source, never blind-add.
+    # Inverting the order means the old source is only removed once a
+    # replacement demonstrably exists. The trade is deliberate and worth stating:
+    #   * OLD: a replace was net-zero, so it still worked AT the cap — at the
+    #     price of destroying the source whenever the add then failed.
+    #   * NEW: a replace needs one slot of headroom, so at exactly 50/50 it
+    #     FAILS instead of churning — and fails with the old source intact.
+    # A bucket that stops syncing until someone frees a slot is recoverable.
+    # A bucket that eats sources is not. The preflight already warns at 47/50,
+    # so the cap is visible well before it becomes blocking.
+    #
+    # The ghost-duplicate defence still holds, because the old source is deleted
+    # BY ID (never by title) and the _claim_unique_title sweep runs afterwards.
+    # The window where both copies exist is seconds long, and a crash inside it
+    # leaves a duplicate — which the deduper cleans up. Duplicate is recoverable;
+    # deletion is not. That is the whole ordering argument.
+
+    # Step 1: ADD the replacement while the old source is still in place.
+    #
+    # DELIBERATELY A SINGLE ATTEMPT. The add failure at the cap is a CLI *parse*
+    # failure ("Failed to get SOURCE_ID from registration response"), so the
+    # upload may have partially registered. Retrying a possibly-successful add is
+    # how the nine duplicates appeared in cdaa7a43 on 2026-04-26.
     new_sid = cmd_add(path)
     if not new_sid:
-        if we_deleted_it:
-            print(f"    ✗✗ SOURCE LOST — deleted {old_source_id[:12]}… then the re-add of "
-                  f"{path.name} failed. The notebook no longer has this source.")
-        elif old_gone:
+        # The old source was never touched — this is the entire point of the
+        # reordering. Distinguish "old still there" (no loss, nothing changed)
+        # from "old was ALREADY missing before this call" (a pre-existing
+        # orphan, so the entry is stale and must be dropped).
+        still_present = source_present(old_source_id) if old_source_id else None
+        if old_source_id and still_present is False:
+            old_gone = True
             print(f"    ✗ stale entry — {old_source_id[:12]}… was already missing from the "
-                  f"notebook and the re-add failed (at the source cap?)")
+                  f"notebook and the add failed (at the source cap?)")
+        else:
+            print(f"    ✗ add failed for {path.name} — old source left INTACT, no data lost. "
+                  f"If this is the source cap, free a slot; the replace will succeed next run.")
         return None, False, old_gone
 
-    # Step 3: verify content actually indexed.
+    # Step 2: verify the new content actually indexed before removing the old.
     verified = cmd_verify_content(new_sid, path)
 
-    # Step 4: ghost-dupe sweep — final safety net for the eventual-consistency
-    # case where steps 1's post-check thought the old source was gone but it
-    # actually wasn't (or it came back after the add). Without this, we'd
-    # leave a stale copy in the notebook for the next preflight to catch.
+    # Step 3: NOW retire the old source, by ID.
+    if old_source_id and not old_source_id.startswith(new_sid[:8]):
+        cmd_delete(old_source_id)
+        # NotebookLM's listing has a ~1-2s eventual-consistency window after a
+        # delete; sleep before the post-check to cut the false reading rate.
+        time.sleep(2)
+        present = source_present(old_source_id)
+        if present is False:
+            old_gone = True
+        else:
+            # Not a loss — just a leftover copy. Say so plainly and let the
+            # sweep below (or the deduper) collect it.
+            print(f"    ! old source {old_source_id[:12]}… still present after delete — "
+                  f"duplicate left behind for the ghost-dupe sweep / deduper")
+    elif old_source_id:
+        old_gone = True
+
+    # Step 4: ghost-dupe sweep — collects any other same-title copy, including
+    # an old source whose explicit delete above didn't take. Declines to act on
+    # an ambiguous (shared) basename, which is why step 3 deletes by ID.
     ghosts = _claim_unique_title(path.name, new_sid)
     if ghosts > 0:
         print(f"    ! ghost-dupe sweep removed {ghosts} stale copy/copies of {path.name}")
