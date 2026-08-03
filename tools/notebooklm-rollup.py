@@ -33,6 +33,7 @@ naming it so it routes itself; this rollup is for the ones that would otherwise
 land in the general bucket.
 """
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -57,6 +58,7 @@ ROLLUPS = {
             "history, kept because the retractions and open items in it are load-bearing."
         ),
         "members": [
+            "wiki/synthesis/handoff-hardentail-2026-08-01.md",
             "wiki/synthesis/handoff-phase3-2026-07-27-pm.md",
             "wiki/synthesis/handoff-phase3-2026-07-27.md",
             "wiki/synthesis/handoff-phase3-31a-2026-07-27.md",
@@ -106,6 +108,73 @@ def all_members() -> list[str]:
     """Every path consolidated by any rollup — what must be excluded from
     routing. Imported by the preflight so the two can never disagree."""
     return [m for spec in ROLLUPS.values() for m in spec["members"]]
+
+
+# Handoffs that deliberately belong to NO rollup. Anything else matching the
+# handoff shape and missing from every rollup is reported by --check as ORPHANED.
+# Keep this list short and justified — it is an allowlist, not a dumping ground.
+ROLLUP_EXEMPT = {
+    # The rollups themselves are not members of themselves.
+    "wiki/synthesis/openfirehouse-handoffs-rollup.md",
+    "wiki/synthesis/hub-handoffs-rollup.md",
+}
+
+
+def _individually_tracked() -> set[str]:
+    """Paths that already have their OWN source in some notebook, per the state files.
+
+    A handoff reaches a notebook one of two legitimate ways: consolidated into a
+    rollup, or routed individually. Only a page in NEITHER is actually uncovered.
+    """
+    # The except is DELIBERATELY NARROW. The first draft caught bare `Exception` and
+    # `continue`d — and `json` was not imported, so every file raised NameError, the
+    # handler swallowed it, and this returned an empty set. The orphan report then
+    # confidently listed 10 healthy files. A broad except turns a bug into a silent
+    # wrong answer, which is the whole disease this session has been chasing.
+    tracked: set[str] = set()
+    files = sorted(VAULT.glob("tools/.notebooklm-*-state.json"))
+    if not files:
+        print("  ! no notebooklm state files found — orphan detection cannot be trusted",
+              file=sys.stderr)
+    for f in files:
+        try:
+            tracked |= set(json.loads(f.read_text()).keys())
+        except (OSError, json.JSONDecodeError) as e:
+            # Unreadable state is a real problem, not something to skip quietly: it makes
+            # every path in that bucket look orphaned. Say so and keep going.
+            print(f"  ! could not read {f.name} ({e}) — paths it tracks may be "
+                  f"reported as orphans", file=sys.stderr)
+    return tracked
+
+
+def find_orphans() -> list[str]:
+    """Handoff-shaped wiki pages that reach NO notebook — neither rolled up nor routed.
+
+    WHY THIS EXISTS: `members` above is a HARDCODED list, so writing a new handoff does
+    NOT add it to a rollup — and until 2026-08-01 nothing noticed. `--check` only
+    compared listed members against their generated output, so a handoff that was never
+    listed was, by construction, always "up to date". Its first run caught the handoff
+    written that same day, already orphaned.
+
+    Same bug shape as everything else this session: a structure that can only report on
+    what it already knows about cannot report what is MISSING from it. The invariant has
+    to be computed from the world, never from the tracking structure.
+
+    ⚠ AND THE FIRST VERSION OF THIS FUNCTION CRIED WOLF — it flagged 10 handoffs as
+    orphaned when all 10 were individually routed and present in notebooks. Checking
+    rollup membership alone measures the wrong thing. A check that fires on healthy state
+    is worse than no check: it trains everyone to ignore it, which is the exact failure
+    this file's own history is about. Hence `_individually_tracked()`.
+    """
+    known = set(all_members()) | ROLLUP_EXEMPT | _individually_tracked()
+    orphans: list[str] = []
+    for pat in ("wiki/synthesis/*handoff*.md", "wiki/deliverables/*HANDOFF*.md",
+                "wiki/synthesis/session-handoff-*.md"):
+        for p in sorted(VAULT.glob(pat)):
+            rel = p.relative_to(VAULT).as_posix()
+            if rel not in known and rel not in orphans:
+                orphans.append(rel)
+    return orphans
 
 
 def render(rel_out: str, spec: dict) -> str:
@@ -180,8 +249,22 @@ def main() -> int:
             target.write_text(new)
             kb = len(new) // 1024
             print(f"  ✓ wrote {rel_out}  ({len(spec['members'])} members, {kb} KB)")
-    if args.check and stale:
-        print("rollups are stale — run tools/notebooklm-rollup.py", file=sys.stderr)
+    # Computed from the FILESYSTEM, not from ROLLUPS — see find_orphans()'s docstring.
+    # A handoff nobody listed would otherwise be "up to date" forever by construction,
+    # and would silently never reach a notebook.
+    orphans = find_orphans()
+    if orphans:
+        print(f"  ! {len(orphans)} handoff(s) belong to NO rollup:", file=sys.stderr)
+        for rel in orphans:
+            print(f"      {rel}", file=sys.stderr)
+        print("    Add each to a rollup's `members` (newest first), or to ROLLUP_EXEMPT "
+              "with a reason.", file=sys.stderr)
+    else:
+        print(f"  = every handoff belongs to a rollup ({len(all_members())} members total)")
+
+    if args.check and (stale or orphans):
+        if stale:
+            print("rollups are stale — run tools/notebooklm-rollup.py", file=sys.stderr)
         return 1
     return 0
 
