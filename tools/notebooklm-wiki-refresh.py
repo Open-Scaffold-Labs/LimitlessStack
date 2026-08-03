@@ -75,7 +75,15 @@ IGNORED_NOTEBOOKS = {
     "75e0f097-9343-4a89-939b-1e1d9fd205cc": "(untitled) empty test notebook",
 }
 
-PROJECT_LABELS = [r[2] for r in NOTEBOOK_ROUTES]  # ["firehazmat", "openchiropractor", ..., "hub"]
+# One entry per LABEL, not per route. Several path prefixes legitimately map to
+# the same notebook (openfirehouse has 10, hub has 8), but plan_routing() returns
+# the COMPLETE file list for a label, so a label needs exactly one pass. Without
+# this dedupe a default run re-processed openfirehouse's whole bucket 10 times and
+# hub's 8 times — 18 redundant passes, each re-listing the notebook and opening
+# another delete-then-add window, and each printing a duplicate preflight line
+# (the repeated "mirror in sync" lines that made the Roll Call output unreadable).
+# dict.fromkeys preserves first-seen order. Fixed 2026-08-03.
+PROJECT_LABELS = list(dict.fromkeys(r[2] for r in NOTEBOOK_ROUTES))
 
 # ── Exclusion list ────────────────────────────────────────────────────────
 # Files matching any of these prefixes are NOT mirrored to ANY notebook —
@@ -194,7 +202,7 @@ _NB_MANIFEST = _MANIFEST.get("NOTEBOOKLM", {})
 
 if "routes" in _NB_MANIFEST:
     NOTEBOOK_ROUTES = _NB_MANIFEST["routes"]
-    PROJECT_LABELS = [r[2] for r in NOTEBOOK_ROUTES]
+    PROJECT_LABELS = list(dict.fromkeys(r[2] for r in NOTEBOOK_ROUTES))  # see the module-level note
 if "default" in _NB_MANIFEST:
     DEFAULT_ROUTE = _NB_MANIFEST["default"]
 if "ignored" in _NB_MANIFEST:
@@ -216,16 +224,48 @@ def reminder_title_for(rel_path: str, basename: str) -> str:
 
 
 # ── notebooklm-py CLI wrappers ───────────────────────────────────────────
+# The notebook every `source *` call is pinned to. `notebooklm use` writes a
+# SINGLE SHARED context file, so any concurrent process — the preflight's
+# 8-notebook dedupe sweep, the nightly self-heal, a second session — can
+# repoint it between our `use` and our next command. This tool ADDS and
+# DELETES sources, so a lost race here does not read the wrong notebook, it
+# WRITES to it. Verified live 2026-08-03: a background preflight moved the
+# context mid-run and a dedupe pass enumerated the wrong bucket. Every
+# `source` subcommand (add/delete/refresh/fulltext/list) accepts --notebook —
+# confirmed against CLI 0.8.0 — so pinning costs nothing.
+_ACTIVE_NOTEBOOK: str | None = None
+
+# Subcommands that are notebook-scoped. Anything else (auth, list, profile)
+# must NOT receive --notebook.
+_NB_SCOPED = {"source", "ask", "artifact", "note", "generate", "download", "research"}
+
+
 def run_nb(args: list[str]) -> subprocess.CompletedProcess:
-    """Run a notebooklm-py CLI command."""
+    """Run a notebooklm-py CLI command, pinned to the active notebook.
+
+    Injects `--notebook <id>` for notebook-scoped subcommands unless the
+    caller already passed one explicitly (a few call sites target a specific
+    notebook directly and must win over the global).
+    """
+    argv = list(args)
+    if (_ACTIVE_NOTEBOOK and argv and argv[0] in _NB_SCOPED
+            and "--notebook" not in argv and "-n" not in argv):
+        argv += ["--notebook", _ACTIVE_NOTEBOOK]
     return subprocess.run(
-        ["notebooklm"] + args,
+        ["notebooklm"] + argv,
         capture_output=True, text=True,
     )
 
 
 def activate_notebook(nbid: str) -> None:
-    """Set the current notebook context. Must be called before any source-* subcommand."""
+    """Pin the notebook for subsequent source-* subcommands.
+
+    Still calls `use` so that anything invoking the CLI outside run_nb (and
+    any human following up by hand) sees the expected context — but run_nb no
+    longer DEPENDS on it, which is what closes the race.
+    """
+    global _ACTIVE_NOTEBOOK
+    _ACTIVE_NOTEBOOK = nbid
     subprocess.run(["notebooklm", "use", nbid],
                    capture_output=True, text=True)
 

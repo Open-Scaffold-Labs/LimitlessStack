@@ -447,6 +447,42 @@ echo ""
 # routing/coverage fixes lived in the Hub vault for a session before the gap
 # was caught. The contract is: any future drift here fails the next session's
 # Roll Call, with a one-line cp command in the warning so it can't go unfixed.
+# Emit a DIRECTION-AWARE drift warning. The remediation must never propose
+# overwriting the newer copy with the older one. Added 2026-08-03: the skills
+# check hardcoded canonical->installed, and following it literally would have
+# rolled the notebooklm skill back from v0.7.3 to the April v0.3.4 — silently
+# reinstating documented false-positive traps (e.g. bare `auth check --json`).
+# Direction: an embedded `notebooklm-py vX.Y.Z` marker WINS when both sides
+# carry one and they differ — mtime lies (a touch, a git checkout, or an
+# install.sh run bumps it without changing content). Falls back to mtime when
+# there is no version signal, or when both sides report the same version.
+canonical_drift_warn() {
+  local label="$1" canon="$2" local_f="$3"
+  local canon_mt local_mt canon_v local_v vnote="" local_newer=false
+  canon_mt=$(stat -f %m "$canon" 2>/dev/null || echo 0)
+  local_mt=$(stat -f %m "$local_f" 2>/dev/null || echo 0)
+  canon_v=$(grep -m1 -oE 'notebooklm-py v[0-9]+\.[0-9]+\.[0-9]+' "$canon" 2>/dev/null | sed 's/.*v//')
+  local_v=$(grep -m1 -oE 'notebooklm-py v[0-9]+\.[0-9]+\.[0-9]+' "$local_f" 2>/dev/null | sed 's/.*v//')
+  [ -n "$canon_v$local_v" ] && vnote=" [canonical v${canon_v:-?} · local v${local_v:-?}]"
+
+  if [ -n "$canon_v" ] && [ -n "$local_v" ] && [ "$canon_v" != "$local_v" ]; then
+    # Version marker is authoritative. `sort -V` puts the higher version last.
+    [ "$(printf '%s\n%s\n' "$canon_v" "$local_v" | sort -V | tail -1)" = "$local_v" ] && local_newer=true
+    vnote="$vnote (by version marker)"
+  else
+    [ "$local_mt" -gt "$canon_mt" ] && local_newer=true
+    [ -n "$vnote" ] && vnote="$vnote (by mtime)"
+  fi
+
+  if $local_newer; then
+    warn "$label drifted — LOCAL is newer, PROMOTE it to canonical$vnote" \
+         "cp \"$local_f\" \"$canon\"  — do NOT copy the other way, it would downgrade"
+  else
+    warn "$label drifted — CANONICAL is newer$vnote" \
+         "cp \"$canon\" \"$local_f\""
+  fi
+}
+
 echo "[meta] Limitless Stack canonical sync"
 LIMITLESS_STACK_HOME="${LIMITLESS_STACK_HOME:-/Users/matthewlavin/LimitlessStack}"
 if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
@@ -462,8 +498,7 @@ if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
     [ -f "$local_f" ] || continue
     if ! diff -q "$canon" "$local_f" >/dev/null 2>&1; then
       tools_clean=false
-      warn "tools/$fname drifted from LimitlessStack canonical" \
-           "diff \"$VAULT/tools/$fname\" \"$LIMITLESS_STACK_HOME/tools/$fname\"  — then cp the newer one over the older"
+      canonical_drift_warn "tools/$fname" "$canon" "$local_f"
     fi
   done
   if $tools_clean; then
@@ -483,8 +518,7 @@ if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
     fi
     if ! diff -q "$canon" "$installed" >/dev/null 2>&1; then
       skills_clean=false
-      warn "skill '$s' drifted from LimitlessStack canonical" \
-           "cp $LIMITLESS_STACK_HOME/skills/$s/SKILL.md ~/.claude/skills/$s/SKILL.md  (or rerun install.sh)"
+      canonical_drift_warn "skill '$s'" "$canon" "$installed"
     fi
   done
   if $skills_clean; then
@@ -807,24 +841,43 @@ else
   else
     _ROUTE_LIST="firehazmat:wiki/apps/firehazmat.md openchiropractor:wiki/apps/openchiropractor.md openfirehouse:wiki/apps/openfirehouse.md opensalon:wiki/apps/opensalon.md the-match:wiki/apps/the-match.md"
   fi
+  # Report ONE line per LABEL, not per route. Several routes legitimately share
+  # a label (openfirehouse has 10 path prefixes, hub has 8) and they all compare
+  # against that label's single state file — so a per-route loop emitted 10
+  # identical "mirror in sync" lines with the same age. That padded Roll Call's
+  # output with ~18 redundant greens, which is how a real finding gets skimmed
+  # past. Detection is unchanged: we take the NEWEST routed file per label,
+  # which is exactly the one that decides staleness. bash 3.2 on macOS has no
+  # associative arrays, hence the two-pass string approach. Fixed 2026-08-03.
+  _SEEN_LABELS=""
   for route in $_ROUTE_LIST; do
     label="${route%%:*}"
-    file="${route#*:}"
+    case " $_SEEN_LABELS " in *" $label "*) continue ;; esac
+    _SEEN_LABELS="$_SEEN_LABELS $label"
+
     state_path="$VAULT/tools/.notebooklm-${label}-state.json"
-    target="$VAULT/$file"
     if [ ! -f "$state_path" ]; then
       warn "no notebooklm $label state file" "python3.11 tools/notebooklm-wiki-refresh.py --seed --only $label"
       continue
     fi
-    if [ ! -f "$target" ]; then
-      # routed file missing on disk — other checks cover this
-      continue
-    fi
     STATE_TS=$(stat -f '%m' "$state_path" 2>/dev/null || echo 0)
-    FILE_TS=$(stat -f '%m' "$target" 2>/dev/null || echo 0)
+
+    # Newest routed file for this label across every route that shares it.
+    NEWEST_TS=0; NEWEST_FILE=""; ROUTED_ANY=false
+    for r2 in $_ROUTE_LIST; do
+      [ "${r2%%:*}" = "$label" ] || continue
+      f2="${r2#*:}"
+      t2="$VAULT/$f2"
+      [ -f "$t2" ] || continue          # missing on disk — other checks cover it
+      ROUTED_ANY=true
+      ts2=$(stat -f '%m' "$t2" 2>/dev/null || echo 0)
+      if [ "$ts2" -gt "$NEWEST_TS" ]; then NEWEST_TS="$ts2"; NEWEST_FILE="$f2"; fi
+    done
+    $ROUTED_ANY || continue
+
     AGE_HOURS=$(( (NOW_TS - STATE_TS) / 3600 ))
-    if [ "$FILE_TS" -gt "$STATE_TS" ]; then
-      warn "notebooklm $label mirror stale ($file edited since last refresh, ${AGE_HOURS}h ago)" "python3.11 tools/notebooklm-wiki-refresh.py --only $label"
+    if [ "$NEWEST_TS" -gt "$STATE_TS" ]; then
+      warn "notebooklm $label mirror stale ($NEWEST_FILE edited since last refresh, ${AGE_HOURS}h ago)" "python3.11 tools/notebooklm-wiki-refresh.py --only $label"
     else
       ok "notebooklm $label mirror in sync (${AGE_HOURS}h since refresh)"
     fi
@@ -842,8 +895,16 @@ else
   if [ ! -f "$VAULT/.limitless-project.py" ]; then
     _HAS_HUB_ROUTE=true
   fi
+  # This hub block predates the generic per-route loop above and uses a glob
+  # (wiki/synthesis/hub-*.md) rather than the manifest routes. When a manifest
+  # IS present the loop already reported the hub label, so running this too
+  # printed the same verdict twice. Kept for the no-manifest fallback, where
+  # the hardcoded _ROUTE_LIST has no hub entry and this is the only hub check.
+  case " ${_SEEN_LABELS:-} " in
+    *" hub "*) _HAS_HUB_ROUTE=false ;;   # already reported by the loop
+  esac
   if ! $_HAS_HUB_ROUTE; then
-    : # skip hub route check — project doesn't have one
+    : # skip hub route check — project doesn't have one, or the loop covered it
   elif [ ! -f "$HUB_STATE" ]; then
     warn "no notebooklm hub state file" "python3.11 tools/notebooklm-wiki-refresh.py --seed --only hub"
   else
@@ -980,19 +1041,49 @@ except Exception:
     for entry in $notebooks; do
       nb_id="${entry%%:*}"
       nb_label="${entry##*:}"
-      DUPE_COUNT=$(notebooklm use "$nb_id" >/dev/null 2>&1 && \
-                   notebooklm source list --json 2>/dev/null | \
+      # Count only what notebooklm-dedupe.py would actually delete. A shared
+      # TITLE is not a duplicate: two different wiki pages can share a
+      # basename (this vault has wiki/index.md AND
+      # wiki/app-creation-reminders/index.md, both uploading as 'index.md').
+      # Title-only counting reported that pair as a duplicate and pointed at
+      # --apply, which would have deleted a live page's source and repointed
+      # its state entry at the OTHER page — silent permanent staleness
+      # (2026-08-03). Sources claimed by DIFFERENT state paths are a
+      # collision, never a duplicate; only unclaimed ghosts are deletable.
+      # --notebook, NOT `use`: `use` mutates a single shared context file, so
+      # this very loop repoints it 8 times and any concurrent process (a
+      # session running the deduper, the nightly self-heal) can read the wrong
+      # bucket. Proven live 2026-08-03. Explicit ids are also what the CLI's
+      # own docs prescribe for parallel workflows.
+      DUPE_COUNT=$(notebooklm source list --notebook "$nb_id" --json 2>/dev/null | \
                    python3.11 -c "
-import json, sys
-from collections import Counter
+import json, sys, pathlib
+from collections import defaultdict
 try:
     d = json.load(sys.stdin)
     s = d if isinstance(d, list) else d.get('sources', [])
-    titles = [src.get('title') for src in s]
-    print(sum(c - 1 for c in Counter(titles).values() if c > 1))
+    claims = {}
+    p = pathlib.Path(sys.argv[1])
+    if p.exists():
+        for rel, entry in json.loads(p.read_text()).items():
+            sid = entry.get('source_id') if isinstance(entry, dict) else None
+            if sid:
+                claims[sid] = rel
+    by_title = defaultdict(list)
+    for src in s:
+        by_title[src.get('title')].append(src)
+    total = 0
+    for title, group in by_title.items():
+        if len(group) < 2:
+            continue
+        owners = {claims[g.get('id')] for g in group if claims.get(g.get('id'))}
+        if len(owners) > 1:
+            continue
+        total += len(group) - 1
+    print(total)
 except Exception:
     print(-1)
-" 2>/dev/null || echo -1)
+" "$VAULT/tools/.notebooklm-$nb_label-state.json" 2>/dev/null || echo -1)
       if [ "$DUPE_COUNT" = "-1" ] || [ -z "$DUPE_COUNT" ]; then
         # CLI unavailable / parse failed for this notebook — count toward
         # the skipped tally so the summary line reflects coverage gaps.
