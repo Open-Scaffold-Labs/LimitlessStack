@@ -24,6 +24,16 @@ cannot fail verifies nothing).
       tenant key is `department_id` (never bake in `station_id` — the active_boards trap).
       Dale-gated where security/legal/DEFINER/FK-to-legal-records.
 - [ ] **routeKit + zod on every route** (§2 below). Zero bare tenant reads outside the kit.
+- [ ] **Every guard is REACHABLE by the input it guards against.** For each guard you add or rely
+      on: name the input that triggers it, and prove that input can actually arrive there. If it
+      must pass a filter first, go read the filter. Three distinct ways this fails, all shipped
+      here: *unreachable* (anti-pattern #61 — a retired-route redirect sat downstream of the Set
+      that rejects retired routes, so it never ran once in six weeks); *remedy-not-offered*
+      (`9abbdd9` — the guard said "or remove the row" while the remove button was hidden in exactly
+      the state the guard fires in); *incomplete-across-writers* (`PASS_WITH_OPEN_VIOLATIONS` fired
+      on `/complete` and not on the `PATCH` the iPad wrote through — "a guard that exists on one
+      route and not another is not a guard"). "It would fire if this value showed up" is the wrong
+      question; "can this value show up here" is the right one.
 - [ ] **Adversarial tests, not happy-path** (§4 below).
 - [ ] **Offline honesty where field-relevant.** New ops = new intent vocabulary on the ONE
       existing batch (`fi-sync/batch` pattern: client-minted idempotency UUIDs, refused-vs-
@@ -93,6 +103,11 @@ pattern (`tenancyIsolation.test.js` is the reference). Run: `cd server && TENANC
 - **Finalization guard** (where records finalize): 409 unconditional; no field mutable after.
 - **The domain's documented failure mode** from the market research (e.g. scheduling:
   double-award race, skip-order grievance trail; logistics: passed-check-with-open-defect).
+- **Guard reachability, and WRITER COVERAGE where a column is controlled**: enumerate every
+  statement that writes the controlled column (online route, batch job, sync op, the create route,
+  any raw SQL) and assert the guard on each. A guard on one door is not a guard. Where the value is
+  a closed set, also assert a NEAR-MISS is refused (`'Passed'`, `'Duplicate'`, a trailing space) —
+  never pattern-matched, never coerced.
 - **Schema honesty**: the exact statement the code will run, against prod schema, in a
   transaction with ROLLBACK — a check that could fail.
 
