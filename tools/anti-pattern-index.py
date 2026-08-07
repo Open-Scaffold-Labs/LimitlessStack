@@ -93,6 +93,9 @@ TRIPWIRES = [
     ('a test total, a node count or a coverage number that DROPPED',
      ["29", "65"],
      "A shrinking total is a finding. Reconcile the arithmetic: previous + new = current, exactly."),
+    ('a probe you have now run THREE times that keeps returning the same thing',
+     ["29", "40", "25"],
+     "An unchanging reading is a claim about the INSTRUMENT until proven otherwise. Stop polling; check the probe (`ps -o etime=`, log mtime). Never poll liveness by `pgrep -f <name>` — it matches your own poll."),
 ]
 
 # §1 — SITUATION -> entries. Every non-exempt heading must appear at least once.
