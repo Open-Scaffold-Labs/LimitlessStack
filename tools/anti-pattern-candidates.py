@@ -28,7 +28,23 @@ LOG  = os.path.join(VAULT, "wiki", "log.md")
 
 # Log ops whose entries typically encode a mistake-and-fix (the raw material for
 # candidate anti-patterns). 'ingest'/'query' rarely do, so they're excluded.
-MISTAKE_OPS = ("refactor", "schema", "lint")
+#
+# WIDENED 2026-08-07, and the omission had ALREADY BITTEN. The tuple used to be
+# ("refactor", "schema", "lint"), which silently dropped every entry logged as
+# 'correction', 'retraction', 'fix', 'build' or 'audit' — and 'correction' and
+# 'retraction' are BY NAME nothing but mistakes. Measured on wiki/log.md that day:
+# collected refactor 124 / schema 118 / lint 9; dropped correction 2 / retraction 2 /
+# fix 4 / build 6 / audit 1. Four of the seven entries in that session's review
+# corpus were uncollectable ops (3 build, 1 correction), and the 'correction' entry
+# is where BOTH independent inspectors found their strongest material. Running the
+# review off this tool's own output would have missed it.
+#
+# Second-order, and why a one-line constant matters: review_due() shares this tuple,
+# so a session that logged its mistakes as 'correction' or 'fix' would never have
+# tripped the review trigger at all. The gatherer for the anti-patterns loop had the
+# exact blind spot the loop exists to catch.
+MISTAKE_OPS = ("refactor", "schema", "lint",
+               "fix", "correction", "retraction", "build", "audit")
 
 
 def _read(path):
@@ -47,7 +63,25 @@ def existing_anti_patterns(text):
         num, title = m.group(1), m.group(2).strip()
         end = heads[idx + 1][0] if idx + 1 < len(heads) else len(lines)
         block = "\n".join(lines[i + 1:end])
-        gm = re.search(r"\*\*What happens\*\*:\s*(.+)", block)
+        # Gist extraction, THREE tiers — because keying on one literal made this
+        # silently return nothing for a third of the page.
+        #
+        # Measured on the live page 2026-08-07 (69 entries): 46 used
+        # "**What happens**:", 7 used "**What happens.**" (period INSIDE the
+        # bold), 1 used "**What happened (OpenFirehouse, 2026-07-14).**", and 15
+        # had no what-happens opener at all. The old single-literal match
+        # therefore produced an EMPTY gist for 23 of 69 — and they were the
+        # NEWEST third (#29-33, #51-67), i.e. precisely the entries a fresh
+        # proposal is most likely to duplicate. The dedup half of the rec #5 loop
+        # had been running blind on the part of the corpus that needed it most,
+        # and nothing reported it. (Anti-pattern #65's addendum: key on a
+        # property the thing cannot avoid having.)
+        #
+        # Tier 3 is the load-bearing one — every entry has prose, so it cannot
+        # rot when the opener style drifts again. It skips blockquote callouts,
+        # list items, headings and table rows to find the first real sentence.
+        gm = (re.search(r"\*\*What happen(?:s|ed)[^*]*\*\*[:.]?\s*(.+)", block)
+              or re.search(r"(?m)^(?!\s*[->#|]|\s*$)(.+)$", block))
         gist = ""
         if gm:
             gist = re.split(r"(?<=[.!?])\s", gm.group(1).strip())[0]

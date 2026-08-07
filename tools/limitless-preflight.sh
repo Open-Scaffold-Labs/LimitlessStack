@@ -402,8 +402,19 @@ if [ -r "$VAULT/wiki/index.md" ]; then
 
   # Check 3: overdue TODO detection — two passes:
   #   3a. wiki/*TODO*.md with `priority: critical` frontmatter older than 3 days
-  #   3b. any wiki/*TODO*.md with explicit "DO AFTER YYYY-MM-DD" past today
+  #   3b. any scanned file with explicit "DO AFTER YYYY-MM-DD" past today
   # Uses the global NOW_TS set at the top of the script.
+  #
+  # WHAT GETS SCANNED (widened 2026-08-07): the legacy wiki/*TODO*.md glob PLUS
+  # the task files CLAUDE.md step 0 says now hold in-flight and overdue work.
+  # Keyed on where the items actually live, not on a filename convention — a
+  # naming convention is a hand-kept list wearing a different hat (#65 addendum).
+  deadline_scan_files() {
+    find "$VAULT/wiki" -iname '*TODO*.md' -type f 2>/dev/null
+    [ -f "$VAULT/wiki/team-tasks.md" ] && echo "$VAULT/wiki/team-tasks.md"
+    find "$VAULT/wiki/my-tasks" -name '*.md' -type f 2>/dev/null
+    return 0
+  }
   OVERDUE=()
   while IFS= read -r todofile; do
     NAME=$(basename "$todofile")
@@ -430,11 +441,25 @@ if [ -r "$VAULT/wiki/index.md" ]; then
         OVERDUE+=("$NAME (${DAYS_OVERDUE}d past explicit deadline $DEADLINE)")
       fi
     fi
-  done < <(find "$VAULT/wiki" -iname '*TODO*.md' -type f 2>/dev/null)
-  if [ ${#OVERDUE[@]} -eq 0 ]; then
-    ok "no overdue TODO items detected"
+  done < <(deadline_scan_files)
+  # COVERAGE FLOOR — the fix for a check that was measuring nothing.
+  # Until 2026-08-07 this scanned `find "$VAULT/wiki" -iname '*TODO*.md'`, which
+  # has matched ZERO files since both TODO files were deleted (CLAUDE.md records
+  # the deletion, 2026-08-05). So it printed "✓ no overdue TODO items detected"
+  # over an empty set, every session, forever — anti-pattern #54 (a probe run
+  # where the condition cannot exist) living inside the mechanism built to
+  # satisfy #13b, i.e. #67 in the wild. A zero-finding result and a
+  # zero-file-scanned result were indistinguishable, which is exactly what #65's
+  # "assert COVERAGE before cleanliness" forbids. Now the count is asserted and
+  # reported, so a green means something.
+  SCANNED=$(deadline_scan_files | grep -c . || true)
+  if [ "$SCANNED" -eq 0 ]; then
+    warn "overdue-deadline scan found NO files to scan — the check is vacuous" \
+         "expected wiki/team-tasks.md, wiki/my-tasks/*.md or a wiki/*TODO*.md; verify the globs in tools/limitless-preflight.sh"
+  elif [ ${#OVERDUE[@]} -eq 0 ]; then
+    ok "no overdue items in $SCANNED task/TODO file(s)"
   else
-    warn "${#OVERDUE[@]} TODO file(s) overdue: ${OVERDUE[*]}" "address the items, then update or delete the file"
+    warn "${#OVERDUE[@]} overdue item(s) across $SCANNED task file(s): ${OVERDUE[*]}" "address the items, then update the task file"
   fi
 fi
 echo ""
@@ -1213,6 +1238,19 @@ except Exception:
       ok "$AP_COUNT anti-patterns on file (edited ${AP_AGE_DAYS}d ago, reminder bucket re-verified after edit)"
     else
       warn "anti-patterns file edited ${AP_AGE_DAYS}d ago and reminder bucket not re-verified since — review before substantive work" "read $ANTIPATTERNS_FILE or run python3.11 tools/notebooklm-wiki-refresh.py --only reminder"
+    fi
+    # The retrieval index at the top of the page is GENERATED from these
+    # headings, and every entry must be routed by at least one §1 situation row.
+    # Added 2026-08-07: without this, a new entry can be appended and never
+    # indexed — the page grows while the thing a session actually reads does not.
+    if [ -f "$VAULT/tools/anti-pattern-index.py" ]; then
+      AP_IDX_OUT=$(cd "$VAULT" && python3.11 tools/anti-pattern-index.py --check 2>&1)
+      if [ $? -eq 0 ]; then
+        ok "anti-pattern retrieval index in sync (every entry routed)"
+      else
+        warn "anti-pattern index drift: $(echo "$AP_IDX_OUT" | head -2 | tr '\n' ' ')" \
+             "cd \"$VAULT\" && python3.11 tools/anti-pattern-index.py   (add new entries to SITUATIONS first)"
+      fi
     fi
     echo ""
     echo "  Active anti-patterns (titles only — full text: wiki/synthesis/claude-anti-patterns.md):"
