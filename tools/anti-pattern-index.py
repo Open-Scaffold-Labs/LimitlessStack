@@ -194,8 +194,12 @@ def labels_for(num, heads):
 def render(heads):
     known = {n for n, _, _ in heads}
     lines = [BEGIN, ""]
-    lines.append(f"**{len(heads)} entries.** Numbers are permanent IDs — they are cited **213 times "
-                 "across 67 files**, 79 of them in the append-only `wiki/log.md`. "
+    # Re-derive this figure with the command in CLAUDE.md § "Anti-patterns page
+    # contract" rather than trusting it. It first shipped as "213 across 67",
+    # lifted from a subagent report and never re-derived; a stated count with no
+    # stated method is unverifiable by everyone downstream.
+    lines.append(f"**{len(heads)} entries.** Numbers are permanent IDs — measured 2026-08-07 they are "
+                 "cited **265 times across 89 files**, 79 of them in the append-only `wiki/log.md`. "
                  "**Never renumber.** `#9` is reserved; `#13` and `#23` each appear twice "
                  "(13a/13b, 23a/23b — see the callouts on those entries).")
     lines.append("")
