@@ -530,6 +530,44 @@ if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
     ok "tools/ in sync with LimitlessStack canonical ($LIMITLESS_STACK_HOME)"
   fi
 
+  # HOOKS — added 2026-08-07, and the gap it closes is the point.
+  # This sync check exists to stop fixes accumulating in one vault. It covered
+  # tools/ and skills/ and NOTHING ELSE — so the five .claude/hooks/ scripts,
+  # including both PreToolUse gates, were outside the one mechanism built to
+  # propagate safeguards. The canonical had no hooks/ at all, install.sh never
+  # deployed any, and this check reported "in sync" the whole time. A project
+  # scaffolded from the canonical inherited ZERO PreToolUse gates while the Hub
+  # vault had been blocking those same commands for months. The propagator could
+  # not see this class of safeguard — anti-pattern #67, in the propagator.
+  # Enumerated dynamically like tools/, so a sixth hook is covered automatically.
+  if [ -d "$LIMITLESS_STACK_HOME/hooks" ]; then
+    hooks_clean=true
+    hooks_seen=0
+    for canon in "$LIMITLESS_STACK_HOME/hooks/"*; do
+      [ -f "$canon" ] || continue
+      fname=$(basename "$canon")
+      [ "$fname" = "settings.hooks.json" ] && continue   # template, spliced by install.sh
+      local_f="$VAULT/.claude/hooks/$fname"
+      [ -f "$local_f" ] || continue
+      hooks_seen=$((hooks_seen + 1))
+      if ! diff -q "$canon" "$local_f" >/dev/null 2>&1; then
+        hooks_clean=false
+        canonical_drift_warn ".claude/hooks/$fname" "$canon" "$local_f"
+      fi
+    done
+    # Coverage floor — a zero-file sweep and a zero-drift sweep are otherwise
+    # indistinguishable (#65: assert coverage before cleanliness).
+    if [ "$hooks_seen" -eq 0 ]; then
+      warn "hooks sync check compared NOTHING — 0 files matched" \
+           "expected $VAULT/.claude/hooks/*.sh to mirror $LIMITLESS_STACK_HOME/hooks/"
+    elif $hooks_clean; then
+      ok ".claude/hooks/ in sync with canonical ($hooks_seen files)"
+    fi
+  else
+    warn "LimitlessStack canonical has no hooks/ directory" \
+         "a project installed from it inherits NO PreToolUse gates; populate $LIMITLESS_STACK_HOME/hooks/"
+  fi
+
   skills_clean=true
   for s in limitless-stack roll-call notebooklm four-tool-lookup verify-before-claim karpathy-guidelines; do
     canon="$LIMITLESS_STACK_HOME/skills/$s/SKILL.md"
