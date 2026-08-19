@@ -156,6 +156,8 @@ Skip the audit pass for:
 - Pure conversational responses with no factual claims ("how are you?", "what is X?")
 - Clarifying questions to the user (the question itself is not a claim)
 - Discussions of trade-offs / options (so long as the trade-offs are accurately described)
+  — **but see "Recommendations are claims too" below: this exemption does NOT cover a
+  recommendation that contradicts research we already hold.**
 - Plain explanations of how something works in concept, when no claim of "I did this" is involved
 
 Apply the audit pass for:
@@ -165,6 +167,46 @@ Apply the audit pass for:
 - Any architecture description ("the function does X") about code in the current session
 - Any test-result, build-result, deploy-result statement
 - Any summary the user is going to use to anchor a decision
+
+
+## Recommendations are claims too, when the question was already researched
+
+The exemption for "discussions of trade-offs / options" is narrower than it looks, and this is the
+seam a real failure came through.
+
+**A recommendation that contradicts our own prior research is a factual error, not a preference.**
+"No surveyed vendor does X" is a fact. Proposing X while that sentence sits in a research page we
+already paid for is not a difference of judgment — it is being wrong about something already
+written down.
+
+**The check, before proposing any behaviour change:**
+
+1. **Has this been researched?** Look in `wiki/synthesis/`, `docs/`, and any market or competitor
+   pass covering the domain. Search by SUBJECT, not by document name.
+2. **If a research page speaks to it, cite it** — in the recommendation itself, so the next reader
+   can see the proposal was weighed against the evidence rather than reasoned from scratch.
+3. **If the research disagrees with you, you are wrong until you can say specifically why** it is
+   stale, was measuring something else, or no longer applies. "It seems better" does not outrank a
+   documented pass. Neither does an internally consistent chain of reasoning.
+
+**The tell:** any recommendation of the form "we should probably…" about behaviour in a domain
+where a competitor or market pass exists. Also: proposing to change something that currently
+matches a documented standard.
+
+**The incident that produced this rule (2026-08-19).** A forward plan proposed making an
+authorisation refusal retryable rather than terminal, and ranked it the second priority. The
+reasoning was coherent and internally consistent. The 2026-08-03 market research — not re-read
+while drafting — said plainly: *"the fail-informatively path (submission rejections surfacing on
+the report, which OF already ships) is the market-standard fallback and is already ours."* The
+recommendation was to abandon a standard we already met, in favour of something no surveyed vendor
+does, and it would have replaced a visible failure with an invisible one. Matt caught it by asking
+"why would we do this?" — the audit pass did not, because it was auditing claims and this was
+shaped like an opinion.
+
+**Why this belongs in THIS skill rather than a style guide:** the failure mode is identical to the
+one the rest of the file guards. Memory-quoted numbers and research-you-did-not-re-read are the
+same error — trusting what you believe over what is written down and checkable. The fix is the
+same too: go read the artifact before asserting.
 
 ## Worked examples
 
