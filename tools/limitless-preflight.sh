@@ -639,29 +639,48 @@ if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
       ok "notebooklm skill current in all CLI-managed stores (v$NB_CLI_V)"
     fi
 
-    # (b) Cowork account caches. COVERAGE FLOOR: a zero-file sweep and a
-    # zero-drift sweep look identical, so say which one happened.
-    NB_REF="$HOME/.claude/skills/notebooklm/SKILL.md"
-    if [ -f "$NB_REF" ]; then
-      NB_REF_V=$(grep -m1 -o 'notebooklm-py v[0-9.]*' "$NB_REF" | sed 's/.*v//')
-      cw_seen=0; cw_bad=""
-      for cw in /var/folders/*/*/T/claude-hostloop-plugins/*/*/skills/notebooklm/SKILL.md; do
-        [ -f "$cw" ] || continue
-        cw_seen=$((cw_seen+1))
-        cw_v=$(grep -m1 -o 'notebooklm-py v[0-9.]*' "$cw" | sed 's/.*v//')
-        [ "$cw_v" = "$NB_REF_V" ] || cw_bad="${cw_bad}${cw_v:-unknown} "
-      done
-      if [ "$cw_seen" -eq 0 ]; then
-        skip "no Cowork skill cache on disk to compare (nothing scanned — not a pass)"
-      elif [ -n "$cw_bad" ]; then
-        # NOT auto-fixable by cp: the cache is read-only and regenerated from
-        # the ACCOUNT store, so the only durable fix is re-uploading the skill.
-        warn "notebooklm skill stale in $(printf '%s' "$cw_bad" | wc -w | tr -d ' ') Cowork cache(s) (found ${cw_bad%% }, expected $NB_REF_V)" \
-             "notebooklm skill package  → upload notebooklm-skill.zip via Claude Settings → Capabilities. Do NOT cp into the cache; it is read-only and rebuilt from the account store."
-      else
-        ok "notebooklm skill current in $cw_seen Cowork cache(s) (v$NB_REF_V)"
-      fi
-    fi
+  fi
+
+  # ── (b) EVERY skill, across EVERY Cowork ACCOUNT (rewritten 2026-08-20 PM) ──
+  # This started as a notebooklm-only version-marker check. That was too narrow
+  # twice over, and both were found the same evening:
+  #
+  #   1. Cowork stores are PER ACCOUNT. `local-agent-mode-sessions/<accountUuid>/
+  #      <orgUuid>/` — confirmed by config.json's `lastKnownAccountUuid`, and
+  #      proved by the skill SETS differing between the two (one account had six
+  #      skills the other did not). Uploading a skill updates ONLY the account
+  #      you were signed into. A second account does NOT self-heal by opening;
+  #      it rebuilds its cache from its OWN stale store.
+  #   2. Keying on a version marker only works for a vendor skill that has one.
+  #      Matt's own skills carry no version, and TWO of them were stale in the
+  #      account he does OpenScaffold work in — roll-call (April, missing the
+  #      deferred-blocker protocol) and audit-before-claim (missing the
+  #      "recommendations are claims too" section). Both had been invoked that
+  #      session. Comparing by sha catches what a marker cannot.
+  #
+  # Skills absent from Cowork are NOT reported: several (limitless-stack,
+  # karpathy-guidelines, of-module-hardening, impeccable) are in neither account
+  # and are Claude Code-only by design. Absence is a choice; staleness is a bug.
+  cw_seen=0; cw_stale=""
+  for cw_skill in /var/folders/*/*/T/claude-hostloop-plugins/*/*/skills/*/SKILL.md; do
+    [ -f "$cw_skill" ] || continue
+    cw_seen=$((cw_seen+1))
+    s_name=$(basename "$(dirname "$cw_skill")")
+    s_ref="$HOME/.claude/skills/$s_name/SKILL.md"
+    [ -f "$s_ref" ] || continue          # not one of ours to judge
+    diff -q "$s_ref" "$cw_skill" >/dev/null 2>&1 && continue
+    case " $cw_stale " in *" $s_name "*) ;; *) cw_stale="${cw_stale}${s_name} " ;; esac
+  done
+  if [ "$cw_seen" -eq 0 ]; then
+    # COVERAGE FLOOR: a zero-file sweep and a zero-drift sweep are otherwise
+    # indistinguishable, and printing a checkmark over an empty set is how the
+    # overdue-TODO scan lied for two days.
+    skip "no Cowork skill cache on disk to compare (nothing scanned — NOT a pass)"
+  elif [ -n "$cw_stale" ]; then
+    warn "Cowork skill(s) stale vs ~/.claude/skills: ${cw_stale%% } (scanned $cw_seen)" \
+         "zip each as <name>/SKILL.md into <name>.skill and install it — per ACCOUNT. The cache is read-only and rebuilt from the account store, so cp does nothing, and uploading under one account does NOT fix another."
+  else
+    ok "Cowork skills match ~/.claude/skills ($cw_seen scanned)"
   fi
 else
   warn "LIMITLESS_STACK_HOME ($LIMITLESS_STACK_HOME) not present — can't verify Limitless Stack sync" \
