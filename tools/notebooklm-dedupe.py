@@ -2,15 +2,23 @@
 """
 Dedupe an active NotebookLM notebook.
 
-Groups sources by title, keeps the most recently created copy of each,
-deletes the older ones, and updates any state file that pointed at a
-deleted source_id so it now points at the survivor.
+Groups sources by title, keeps the newest READY copy of each, deletes the
+older ones, and updates any state file that pointed at a deleted source_id
+so it now points at the survivor.
 
-The bug that creates these duplicates lives in `cmd_replace` inside
-`notebooklm-wiki-refresh.py` — when `cmd_delete` returns False because
-its post-check trips, the next call to `cmd_add` uploads a new copy
-without removing the old one. Patch ships in the same commit as this
-tool. Existing duplicates require this one-shot cleanup.
+WHERE DUPLICATES COME FROM (current, as of 2026-08-03). `cmd_replace` in
+`notebooklm-wiki-refresh.py` runs ADD → verify → delete-old-by-id. That
+ordering is deliberate: deleting first turned a source-cap failure into
+permanent data loss and cost 17 sources in the 2026-07-26..29 window. The
+trade is that an interrupted replace leaves BOTH copies — a duplicate,
+which is the recoverable direction, and which this tool cleans up.
+
+⚠ THE CONSEQUENCE THAT BIT US TWICE. `_checkpoint()` writes state only after
+`cmd_replace` RETURNS, so an interrupted replace leaves the newest copy
+UNCLAIMED and its stale predecessor CLAIMED. Survivor selection therefore
+keys on recency + readiness, never on the claim; the claim decides only
+OWNERSHIP (which page a source mirrors), which is what stops two distinct
+pages sharing a basename from being "deduped" into one. See find_dupes.
 
 Usage:
     python3.11 tools/notebooklm-dedupe.py --notebook cdaa7a43 --state wiki           # dry-run
@@ -96,8 +104,19 @@ def delete_source(source_id: str) -> bool:
 
 def load_claims(state_path: Path) -> dict[str, str]:
     """Reverse map source_id -> the wiki path that CLAIMS it, from a route
-    state file. A claimed source is a live mirror of a real wiki page; an
-    unclaimed one is a ghost left behind by the cmd_replace bug."""
+    state file.
+
+    A claim proves OWNERSHIP — which wiki page a source mirrors. It does NOT
+    prove CURRENCY, and conflating the two is what made this tool recommend
+    deleting live content (see find_dupes).
+
+    ⚠ This used to read "an unclaimed one is a ghost left behind by the
+    cmd_replace bug." That was true while cmd_replace was DELETE-first: the
+    leftover really was junk. cmd_replace was inverted to ADD-before-DELETE on
+    2026-08-03, and `_checkpoint()` writes state only AFTER cmd_replace returns
+    — so an interrupted replace now leaves the FRESHEST source unclaimed and the
+    stale predecessor claimed. Unclaimed means "state has not caught up yet",
+    which is the opposite of junk. Corrected 2026-08-20."""
     if not state_path or not state_path.exists():
         return {}
     state = json.loads(state_path.read_text())
@@ -111,7 +130,14 @@ def load_claims(state_path: Path) -> dict[str, str]:
 
 def find_dupes(sources: list[dict], claims: dict[str, str] | None = None
                ) -> tuple[list[tuple[str, list[dict]]], list[tuple[str, list[str]]]]:
-    """Return (dupe_groups, collisions).
+    """Return (dupe_groups, reported).
+
+    `reported` is the "print it, never delete it" channel and its entries are
+    (title, reason, details). The reason field exists because that channel now
+    carries TWO different refusals — a filename collision and a group with no
+    ready copy — and the printer used to hardcode "filename collision" over
+    whatever arrived (caught in review 2026-08-20, before it shipped).
+
 
     Sources are grouped by title, but a shared title is NOT proof of a
     duplicate: two DIFFERENT wiki pages can share a basename. This vault has
@@ -124,8 +150,32 @@ def find_dupes(sources: list[dict], claims: dict[str, str] | None = None
     A source CLAIMED by a state entry is a live mirror of a distinct page.
     Two sources claimed by DIFFERENT paths are a filename collision, never a
     duplicate — those are returned separately as `collisions` (reported, never
-    deleted). Only UNCLAIMED ghosts are deletable, and the claimed source is
-    preferred as the survivor over merely-newest.
+    deleted). That ownership rule is the IDENTITY guarantee and is unchanged.
+
+    ⚠ SURVIVOR SELECTION CHANGED 2026-08-20 — the claim decides IDENTITY, never
+    CURRENCY. This function used to end "the claimed source is preferred as the
+    survivor over merely-newest", which silently inverted when cmd_replace was
+    changed to ADD-before-DELETE on 2026-08-03:
+
+      * DELETE-first (pre 08-03): old removed, new added. A leftover unclaimed
+        source was junk from a failed add. Preferring the claimed one was RIGHT.
+      * ADD-first (current): new added, THEN old removed — and `_checkpoint()`
+        writes state only after cmd_replace RETURNS. Interrupt in between and
+        the unclaimed source is the NEWEST CONTENT while the claimed one is its
+        stale predecessor. Preferring the claimed one now deletes live content
+        and repoints state at the stale copy, after which every later refresh
+        reports "in sync" forever.
+
+    Observed twice before it was traced: team-tasks.md on 2026-08-18
+    (wiki/log.md:7591 — diagnosed as "always re-run the refresh after a dedupe",
+    a workaround for the symptom), and log.md on 2026-08-20, where the dry-run
+    proposed keeping a copy 3,677 chars SHORT of the one it wanted to delete.
+
+    So within a single-owner group the survivor is the newest READY source.
+    Readiness matters: a still-indexing upload can win on created_at while
+    holding nothing, and deleting the only ready copy in its favour would be
+    the same data loss by a different route. A group with NO ready source is
+    refused rather than guessed at.
     """
     claims = claims or {}
     by_title = defaultdict(list)
@@ -144,22 +194,47 @@ def find_dupes(sources: list[dict], claims: dict[str, str] | None = None
 
         if len(owners) > 1:
             # Distinct pages sharing a basename. Report; never touch.
-            collisions.append((title, sorted(owners)))
+            collisions.append((title, "filename collision", sorted(owners)))
             if not unclaimed:
                 continue
             # Ghosts alongside a collision are ambiguous — we cannot tell which
             # page a ghost belonged to, so we refuse to guess.
-            collisions[-1] = (title, sorted(owners) + [f"+{len(unclaimed)} unclaimed (not touched — owner ambiguous)"])
+            collisions[-1] = (title, "filename collision",
+                              sorted(owners) + [f"+{len(unclaimed)} unclaimed (not touched — owner ambiguous)"])
             continue
 
-        if not unclaimed:
-            # Every copy is claimed by the same single path: a true duplicate.
-            out.append((title, group))
-            continue
+        # ── Survivor = newest READY source (2026-08-20) ───────────────────
+        # `group` is already sorted newest-first. Both former branches (all-
+        # claimed, and claimed+ghosts) now resolve the same way, because the
+        # claim never carried currency information in either of them.
+        statuses = [str(s.get("status") or "").lower() for s in group]
+        if any(statuses):
+            ready = [s for s in group
+                     if str(s.get("status") or "").lower() == "ready"]
+            if not ready:
+                # Every copy still indexing, or errored. Deleting any of them
+                # could destroy the only recoverable content. Report, never act.
+                # NOTE this rides the same "reported, never deleted" channel as
+                # a filename collision but is NOT one — hence the explicit
+                # reason field, added after the first draft pushed it in here
+                # and would have printed "filename collision" over it.
+                collisions.append((title, "no ready copy", [
+                    f"{len(group)} copies, statuses: "
+                    f"{', '.join(sorted(set(statuses)))} — refusing to choose a survivor"]))
+                continue
+        else:
+            # No source reported a status at all. Don't invent readiness —
+            # fall back to newest-overall and say so at print time.
+            ready = group
 
-        # Prefer the claimed source as survivor; delete the ghosts.
-        survivor = claimed[0] if claimed else group[0]
+        survivor = ready[0]
         losers = [s for s in group if s is not survivor]
+        # Flag the case this fix exists for: the state file claims a source
+        # that is NOT the survivor. Expected after an interrupted add-first
+        # replace; remap_state repoints it, and the caller is told to re-verify.
+        survivor["_claim_moved"] = bool(
+            claimed and claims.get(claimed[0].get("id")) and claimed[0] is not survivor
+        )
         out.append((title, [survivor] + losers))
     return out, collisions
 
@@ -221,8 +296,11 @@ def main():
 
     dupes, collisions = find_dupes(sources, claims)
 
-    for title, owners in collisions:
-        print(f"  {title!r}: filename collision, NOT duplicates — left alone")
+    for title, reason, owners in collisions:
+        if reason == "filename collision":
+            print(f"  {title!r}: filename collision, NOT duplicates — left alone")
+        else:
+            print(f"  {title!r}: {reason} — left alone, nothing deleted")
         for o in owners:
             print(f"    · {o}")
     if collisions:
@@ -233,7 +311,7 @@ def main():
               else "No true duplicates found (collisions above are distinct pages).")
         return
     total_to_delete = sum(len(g) - 1 for _, g in dupes)
-    print(f"{len(dupes)} duplicate groups; will delete {total_to_delete} source(s) (keeping the claimed/most-recent of each).")
+    print(f"{len(dupes)} duplicate groups; will delete {total_to_delete} source(s) (keeping the NEWEST READY copy of each).")
     print()
 
     id_remap: dict[str, str] = {}
@@ -246,6 +324,12 @@ def main():
         survivor_at = survivor.get("created_at", "?")
         print(f"  {title!r}")
         print(f"    KEEP    {survivor_id[:12]}… created {survivor_at}")
+        if survivor.pop("_claim_moved", False):
+            # The state file claimed a DIFFERENT copy. Normal after an
+            # interrupted add-before-delete replace; remap_state repoints it.
+            # Said out loud because the old code silently kept the claimed one
+            # and that is exactly how live content got proposed for deletion.
+            print("      ↳ state claimed a different copy; the claim moves to this one")
         for losing in group[1:]:
             losing_id = losing.get("id")
             losing_at = losing.get("created_at", "?")
@@ -273,6 +357,18 @@ def main():
     print()
     if args.apply:
         print(f"Done. Deleted {len(deleted_ids)} sources, {len(failed_ids)} failures.")
+        if deleted_ids:
+            # wiki/log.md:7591 (2026-08-18) recorded this as the standing
+            # mitigation and it was never wired into the tool that needs it:
+            # a survivor can be behind the file on disk, and the state entry
+            # this run just repointed carries no verified_at. Say it here so
+            # nobody has to remember it.
+            print()
+            print("NEXT — do not skip: a survivor is the newest copy in the NOTEBOOK,")
+            print("which is not necessarily current with the file on disk. Re-verify:")
+            lbl = args.state or "<label>"
+            print(f"  python3.11 tools/notebooklm-wiki-refresh.py --only {lbl} --verify-existing")
+            print("(no uploads; backfills verified_at). Only refresh for real if that reports a gap.")
     else:
         print("Dry-run only — no deletions performed. Pass --apply to execute.")
 

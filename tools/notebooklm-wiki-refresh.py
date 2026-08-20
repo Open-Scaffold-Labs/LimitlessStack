@@ -734,8 +734,19 @@ def _claim_unique_title(title: str, keep_sid: str) -> int:
 
 
 def cmd_replace(path: Path, old_source_id: str | None) -> tuple[str | None, bool, bool]:
-    """Replace a source's content: delete the old one (if any), add the new
-    file, and verify the content actually landed in NotebookLM.
+    """Replace a source's content: ADD the new file, verify the content
+    actually landed in NotebookLM, then delete the old source by id.
+
+    ⚠ THE ORDER IN THIS SENTENCE IS LOAD-BEARING AND IT USED TO BE WRONG HERE.
+    This line read "delete the old one (if any), add the new file" for 17 days
+    after the code was inverted to add-first on 2026-08-03. A present-tense
+    docstring that outlives its code does not just mislead a reader — it
+    propagated verbatim into the vault CLAUDE.md (step 7) and into two session
+    handoffs, and it silently inverted the assumption `notebooklm-dedupe.py`
+    used to pick which duplicate to keep, which on 2026-08-20 produced a
+    recommendation to delete the only complete copy of wiki/log.md. Corrected
+    2026-08-20. If you change the order again, change this sentence in the same
+    commit and grep for the modules that reason about it.
 
     Returns (new_source_id, verified, old_gone) — `old_gone` meaning the old
     source is no longer in the notebook, so its state entry is invalid.
@@ -745,10 +756,12 @@ def cmd_replace(path: Path, old_source_id: str | None) -> tuple[str | None, bool
     indexing within the wait window. The caller should treat verified=False as a
     failure mode and either retry or flag it prominently.
 
-    ⚠ `old_gone` EXISTS BECAUSE THIS FUNCTION CAN LOSE DATA (added 2026-08-01).
-    Step 1 deletes the old source BEFORE step 2 adds the new one. If the add then
-    fails, the old source is GONE and there is no new one — permanent loss of that
-    source from the notebook. Until 2026-08-01 both that case and the harmless
+    ⚠ `old_gone` EXISTS BECAUSE THIS FUNCTION COULD LOSE DATA (added 2026-08-01).
+    HISTORICAL — this describes the DELETE-first ordering that was in force until
+    2026-08-03; see the "ADD BEFORE DELETE" comment in the body for what runs now.
+    Back then step 1 deleted the old source BEFORE step 2 added the new one. If the
+    add then failed, the old source was GONE and there was no new one — permanent
+    loss of that source from the notebook. Until 2026-08-01 both that case and the harmless
     "aborted before deleting anything" case returned a bare (None, False), so the
     caller counted an ordinary `upload_failed` and LEFT THE STATE ENTRY POINTING AT
     THE DELETED ID. State then reported the source present forever, the mtime

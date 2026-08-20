@@ -608,6 +608,61 @@ if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
   if $skills_clean; then
     ok "skills in sync with LimitlessStack canonical"
   fi
+
+  # ── The agent skill stores this loop CANNOT see (added 2026-08-20) ────
+  # The loop above compares exactly two places: the LimitlessStack canonical and
+  # ~/.claude/skills. On 2026-08-20 the notebooklm skill turned out to live in
+  # FOUR, and the two extra ones had been stale since April — a Cowork ACCOUNT
+  # copy at v0.3.4 (still documenting `download audio ./output.mp3`, which has
+  # been .m4a for five minor versions) plus ~/.agents/skills. The sync contract
+  # could not see either, so nothing ever said so. This is the hooks/ lesson
+  # again: a mechanism that propagates safeguards could not see a whole class of
+  # safeguard, and its blind spot was invisible precisely because it was blind.
+  #
+  # Two halves, because the two stores fail differently:
+  #   (a) the CLI already reports its own installed targets — ask IT, don't
+  #       reimplement its knowledge (`notebooklm skill status`).
+  #   (b) the Cowork account copy is surfaced only as a READ-ONLY cache under a
+  #       path containing a per-workspace id and an opaque hash, so it must be
+  #       GLOBBED, never hardcoded — a literal path would rot silently, which is
+  #       the same failure as the overdue-TODO scan that globbed zero files for
+  #       two days and printed a checkmark over an empty set.
+  if command -v notebooklm >/dev/null 2>&1; then
+    NB_STATUS=$(notebooklm skill status 2>/dev/null)
+    NB_CLI_V=$(printf '%s' "$NB_STATUS" | sed -n 's/.*CLI version: *\([0-9.]*\).*/\1/p' | head -1)
+    NB_STALE=$(printf '%s' "$NB_STATUS" | sed -n 's/.*Skill version: *\([0-9.]*\).*/\1/p' \
+               | grep -v "^${NB_CLI_V}$" | sort -u | paste -sd, -)
+    if [ -n "$NB_CLI_V" ] && [ -n "$NB_STALE" ]; then
+      warn "notebooklm skill stale in a CLI-managed store (cli $NB_CLI_V, found $NB_STALE)" \
+           "notebooklm skill install   # updates every target the CLI manages"
+    elif [ -n "$NB_CLI_V" ]; then
+      ok "notebooklm skill current in all CLI-managed stores (v$NB_CLI_V)"
+    fi
+
+    # (b) Cowork account caches. COVERAGE FLOOR: a zero-file sweep and a
+    # zero-drift sweep look identical, so say which one happened.
+    NB_REF="$HOME/.claude/skills/notebooklm/SKILL.md"
+    if [ -f "$NB_REF" ]; then
+      NB_REF_V=$(grep -m1 -o 'notebooklm-py v[0-9.]*' "$NB_REF" | sed 's/.*v//')
+      cw_seen=0; cw_bad=""
+      for cw in /var/folders/*/*/T/claude-hostloop-plugins/*/*/skills/notebooklm/SKILL.md; do
+        [ -f "$cw" ] || continue
+        cw_seen=$((cw_seen+1))
+        cw_v=$(grep -m1 -o 'notebooklm-py v[0-9.]*' "$cw" | sed 's/.*v//')
+        [ "$cw_v" = "$NB_REF_V" ] || cw_bad="${cw_bad}${cw_v:-unknown} "
+      done
+      if [ "$cw_seen" -eq 0 ]; then
+        skip "no Cowork skill cache on disk to compare (nothing scanned — not a pass)"
+      elif [ -n "$cw_bad" ]; then
+        # NOT auto-fixable by cp: the cache is read-only and regenerated from
+        # the ACCOUNT store, so the only durable fix is re-uploading the skill.
+        warn "notebooklm skill stale in $(printf '%s' "$cw_bad" | wc -w | tr -d ' ') Cowork cache(s) (found ${cw_bad%% }, expected $NB_REF_V)" \
+             "notebooklm skill package  → upload notebooklm-skill.zip via Claude Settings → Capabilities. Do NOT cp into the cache; it is read-only and rebuilt from the account store."
+      else
+        ok "notebooklm skill current in $cw_seen Cowork cache(s) (v$NB_REF_V)"
+      fi
+    fi
+  fi
 else
   warn "LIMITLESS_STACK_HOME ($LIMITLESS_STACK_HOME) not present — can't verify Limitless Stack sync" \
        "git clone https://github.com/Open-Scaffold-Labs/LimitlessStack.git \$HOME/LimitlessStack  (or set LIMITLESS_STACK_HOME)"
@@ -1231,8 +1286,13 @@ except Exception:
         # fix command names the right --notebook + --state. One-warn-per-
         # affected-bucket reads better in the verdict block than a single
         # rolled-up warning would.
+        # The --verify-existing follow-up is part of the remediation, not an
+        # optional extra: a dedupe survivor is the newest copy in the NOTEBOOK,
+        # which need not be current with the file on disk, and the state entry
+        # the dedupe repoints carries no verified_at. wiki/log.md:7591 recorded
+        # that on 2026-08-18 and it lived nowhere a reader would meet it.
         warn "notebooklm $nb_id ($nb_label) has $DUPE_COUNT duplicate source(s)" \
-             "python3.11 tools/notebooklm-dedupe.py --notebook $nb_id --state $nb_label  (dry-run first, then --apply)"
+             "python3.11 tools/notebooklm-dedupe.py --notebook $nb_id --state $nb_label  (dry-run first, then --apply) THEN python3.11 tools/notebooklm-wiki-refresh.py --only $nb_label --verify-existing"
         sweep_dirty="${sweep_dirty}${nb_id} "
       fi
     done
