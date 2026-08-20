@@ -100,8 +100,10 @@ check_enabled() {
 GREEN=0
 YELLOW=0
 RED=0
+ACCEPTED=0
 WARNINGS=()
 BLOCKERS=()
+ACCEPTED_NOTES=()
 
 # ── CLI args ────────────────────────────────────────────
 # --json-out         → writes ~/.cache/limitless-stack/health.json with payload
@@ -196,6 +198,25 @@ bad()   {
   [ -z "$CURRENT_TOOL_METRIC" ] && CURRENT_TOOL_METRIC="✗ $1"
 }
 skip()  { echo "  ⊘ $1"; }
+# accepted() — a KNOWN state that is real, visible, and NOT drift: nobody in this
+# session can clear it, and CLAUDE.md already documents it. It PRINTS (so the state
+# never goes invisible) but does NOT increment YELLOW and does NOT enter WARNINGS,
+# so it can never pin the verdict.
+#
+# ⚠ USE THIS SPARINGLY, AND ONLY FOR THE ROLL-CALL AUDIENCE. A false green is
+# believed; a false red is eventually investigated. The bar is: an account-level or
+# external blocker that a session is FORBIDDEN or unable to act on. It is NOT for
+# "we keep seeing this one." In particular do NOT accept() "uncommitted files in
+# vault" or "anti-pattern review due" — the nightly excludes those because a
+# CORRECTOR cannot act on them, but a HUMAN at Roll Call can and should.
+# That difference in audience is why this list is deliberately shorter than
+# nightly-selfheal.sh's ACCEPTED_RE, and why the two are not merged.
+# Added 2026-08-20.
+accepted() {
+  echo "  ℹ $1"
+  ACCEPTED=$((ACCEPTED+1))
+  ACCEPTED_NOTES+=("$1  →  $2")
+}
 
 # ── Network reachability gate (added 2026-07-27) ────────
 #
@@ -631,10 +652,27 @@ resid = len(s.get("residual_findings", []))
 corr = ",".join(s.get("correctors_run", [])) or "none"
 healed = s.get("healed", False)
 needs_human = s.get("needs_human", verdict != "ready")
+# ACTIONABLE vs RESIDUAL. residual_findings holds EVERYTHING the run saw, including
+# the states nightly-selfheal.sh's ACCEPTED_RE deliberately does not escalate. This
+# readout used to print len(residual_findings), so a night with ONE real finding
+# announced "5 residual finding(s)" and buried the one that mattered under four it
+# had already decided were fine. Report what the classifier concluded, and NAME the
+# finding — a count sends the reader to a file, a name lets them act. (2026-08-20)
+actionable = s.get("actionable_findings")
+has_field = actionable is not None
+n_act = len(actionable) if has_field else None
+first = (actionable[0][:150] if actionable else "")
 if age_h > 30:
     print("STALE\tlast nightly self-heal was %.0fh ago (verdict=%s) — job may be broken or Mac asleep\tlaunchctl kickstart -k gui/$(id -u)/com.openscaffold.nightly-selfheal  (or check tools/logs/)" % (age_h, verdict))
+elif needs_human and has_field and n_act == 0:
+    # needs_human with nothing actionable means the two disagree. Say so plainly
+    # rather than picking a side — a silent reconciliation here would hide a bug in
+    # whichever one is wrong.
+    print("NEEDHUMAN\tlast nightly self-heal set needs_human but published 0 actionable findings (verdict=%s, %d residual) — the flag and the list disagree\tcompare needs_human vs actionable_findings in tools/.nightly-selfheal-state.json" % (verdict, resid))
+elif needs_human and has_field:
+    print("NEEDHUMAN\tlast nightly self-heal: %d actionable finding(s) of %d residual, correctors=%s — first: %s\tsee tools/.nightly-selfheal-state.json + tools/logs/" % (n_act, resid, corr, first))
 elif needs_human:
-    print("NEEDHUMAN\tlast nightly self-heal ended %s with %d residual finding(s), correctors=%s\tsee tools/.nightly-selfheal-state.json + tools/logs/" % (verdict, resid, corr))
+    print("NEEDHUMAN\tlast nightly self-heal ended %s with %d residual finding(s) (state file predates actionable_n — count may be inflated by known-accepted states), correctors=%s\tsee tools/.nightly-selfheal-state.json + tools/logs/" % (verdict, resid, corr))
 elif verdict != "ready":
     print("OK\tlast nightly self-heal: READY* (%.0fh ago, %d known-accepted residual, correctors=%s)\t-" % (age_h, resid, corr))
 else:
@@ -780,7 +818,14 @@ except Exception as e:
     # them (the wiki is the primary source of truth; Pinecone is augmentation).
     # Treat as warn, not block. Original block-level treatment was too aggressive
     # for a recurring monthly cycle. (Updated 2026-04-29.)
-    warn "Pinecone embedding quota exhausted (monthly cap hit) — accepting as known state, session may proceed" "pinecone-search + pinecone-sync are non-functional until monthly reset or embedding source is swapped (see wiki/concepts/pinecone-warehouse.md)"
+    # 2026-08-20: demoted warn -> accepted. The text already said "accepting as
+    # known state" while still counting as a drift finding, so every Roll Call and
+    # every nightly opened with a yellow nobody could clear. CLAUDE.md is explicit
+    # that this is Matt's account-level call and that sessions must not re-report
+    # it ("it is in 30 log entries already"). Printing it without counting it is
+    # what that instruction actually asks for.
+    PINECONE_CAPPED=1
+    accepted "Pinecone embedding quota exhausted (monthly cap hit) — known state, session may proceed" "account-level, Matt's to clear (upgrade or monthly reset). pinecone-search + pinecone-sync stay non-functional until then — see wiki/concepts/pinecone-warehouse.md"
   elif echo "$EMBED_PROBE" | grep -q '"error"'; then
     warn "Pinecone embedding probe failed (non-quota error)" "$EMBED_PROBE"
   elif echo "$EMBED_PROBE" | grep -q '"ok": *true'; then
@@ -797,7 +842,16 @@ except Exception as e:
       LAST_SYNC_TS=$(stat -f '%m' "$VAULT/tools/.pinecone-sync-state.json" 2>/dev/null || echo 0)
       LAST_SYNC_AGE_HOURS=$(( (NOW_TS - LAST_SYNC_TS) / 3600 ))
       if [ "$LAST_SYNC_TS" -lt "$WIKI_NEWEST_TS" ]; then
+        # Only a real finding when a sync is POSSIBLE. While the monthly cap is
+        # exhausted this lag is the guaranteed consequence of the cap, and its old
+        # remediation string told the reader to run pinecone-sync.py — a command
+        # CLAUDE.md forbids in capital letters. A fix instruction that must not be
+        # followed is worse than no instruction. (2026-08-20)
+        if [ "${PINECONE_CAPPED:-0}" = "1" ]; then
+          accepted "wiki has edits newer than last Pinecone sync (wiki ${WIKI_AGE_HOURS}h old, last sync ${LAST_SYNC_AGE_HOURS}h ago) — expected while the cap is exhausted" "NO ACTION: do not run pinecone-sync while over cap (CLAUDE.md checklist step 5). The corpus is stale; say so rather than reporting a 429 as 'no hits'."
+        else
         warn "wiki has edits newer than last Pinecone sync (wiki ${WIKI_AGE_HOURS}h old, last sync ${LAST_SYNC_AGE_HOURS}h ago)" "python3.11 tools/pinecone-sync.py --changed-only"
+        fi
       else
         ok "last sync newer than wiki edits (${LAST_SYNC_AGE_HOURS}h ago)"
       fi
@@ -1004,7 +1058,27 @@ else
     LAST_REFRESH_TS=$(stat -f '%m' "$VAULT/tools/.notebooklm-wiki-state.json" 2>/dev/null || echo 0)
     LAST_REFRESH_AGE_HOURS=$(( (NOW_TS - LAST_REFRESH_TS) / 3600 ))
     if [ -n "$WIKI_DEFAULT_NEWEST_TS" ] && [ "$LAST_REFRESH_TS" -lt "$WIKI_DEFAULT_NEWEST_TS" ]; then
-      warn "notebooklm wiki default bucket (cdaa7a43) has edits newer than last refresh (${LAST_REFRESH_AGE_HOURS}h ago)" "python3.11 tools/notebooklm-wiki-refresh.py --only wiki"
+      # An mtime comparison cannot see the notebook. It proves a file was touched
+      # after the state file was written — NOT that content is missing upstream.
+      #
+      # The end-of-session order guarantees this fires: refresh the bucket, THEN
+      # append this session's entry to wiki/log.md. Verified 2026-08-20 — refresh
+      # at 11:27, log.md at 11:29, and asking cdaa7a43 directly returned PRESENT
+      # for both of that day's entries including the file's LAST one. Reported as
+      # drift, that 2-minute ordering artifact is what sent a session into eight
+      # re-uploads of a 1.19 MB file that had already landed (CLAUDE.md step 7).
+      #
+      # So: a lag measured in minutes-to-hours is the normal wrap order and is
+      # informational. A lag over ONE DAY means a session ended without refreshing
+      # at all, which is real drift. The boundary is a heuristic — stated here so
+      # the next reader can move it knowing what it was chosen against.
+      # Either way the remediation is VERIFY, never a blind re-upload. (2026-08-20)
+      EDIT_LAG_HOURS=$(( (WIKI_DEFAULT_NEWEST_TS - LAST_REFRESH_TS) / 3600 ))
+      if [ "$EDIT_LAG_HOURS" -lt 24 ]; then
+        accepted "notebooklm wiki default bucket (cdaa7a43): wiki edits postdate the last refresh by ${EDIT_LAG_HOURS}h — normal end-of-session order, not evidence of absence" "if you need certainty: python3.11 tools/notebooklm-wiki-refresh.py --only wiki --verify-existing (no uploads), or ask the notebook directly. Do NOT re-upload on an mtime alone."
+      else
+        warn "notebooklm wiki default bucket (cdaa7a43) has edits ${EDIT_LAG_HOURS}h newer than last refresh (${LAST_REFRESH_AGE_HOURS}h ago) — a session likely ended without refreshing" "python3.11 tools/notebooklm-wiki-refresh.py --only wiki --verify-existing   # verify FIRST; retry cap two"
+      fi
     else
       ok "notebooklm wiki default bucket (cdaa7a43) in sync (${LAST_REFRESH_AGE_HOURS}h since refresh)"
     fi
@@ -1447,14 +1521,23 @@ import sys, json, datetime
 verdict, g, y, r = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
 warnings = [w for w in sys.argv[5].split("\x1f") if w]
 blockers = [b for b in sys.argv[6].split("\x1f") if b]
+# accepted rides its OWN key, never inside warnings — a consumer that treats this
+# list as drift would recreate exactly the padding this change removes. Carried in
+# the machine channel anyway so the JSON does not silently know less than the
+# console: a state the human can see and the nightly cannot is how a permanent
+# blocker goes quiet. (2026-08-20)
+accepted = [a for a in (sys.argv[7] if len(sys.argv) > 7 else "").split("\x1f") if a]
 print(json.dumps({
   "verdict": verdict, "green": g, "yellow": y, "red": r,
+  "accepted": len(accepted),
   "warnings": warnings, "blockers": blockers,
+  "accepted_notes": accepted,
   "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
 }))
 ' "$FVERDICT" "$GREEN" "$YELLOW" "$RED" \
    "$(IFS=$'\x1f'; echo "${WARNINGS[*]:-}")" \
-   "$(IFS=$'\x1f'; echo "${BLOCKERS[*]:-}")" 2>/dev/null)
+   "$(IFS=$'\x1f'; echo "${BLOCKERS[*]:-}")" \
+   "$(IFS=$'\x1f'; echo "${ACCEPTED_NOTES[*]:-}")" 2>/dev/null)
   if [ -n "$FINDINGS_JSON" ]; then
     mkdir -p "$(dirname "$FINDINGS_OUT")" 2>/dev/null
     printf '%s\n' "$FINDINGS_JSON" > "$FINDINGS_OUT"
@@ -1463,7 +1546,15 @@ fi
 
 # ── Verdict ─────────────────────────────────────────────
 echo "───────────────────────────────────────────────────────"
-echo "  green: $GREEN   yellow: $YELLOW   red: $RED"
+# ⚠ The "green: N   yellow: N   red: N" substring is SCRAPED by nightly-selfheal.sh
+# (grep -oE 'green: [0-9]+   yellow: [0-9]+   red: [0-9]+'). Anything new must be
+# APPENDED after it — never inserted into it, or the nightly silently falls back to
+# a different source for its counts.
+if [ "$ACCEPTED" -gt 0 ]; then
+  echo "  green: $GREEN   yellow: $YELLOW   red: $RED   accepted: $ACCEPTED"
+else
+  echo "  green: $GREEN   yellow: $YELLOW   red: $RED"
+fi
 echo ""
 
 if [ "$RED" -gt 0 ]; then
@@ -1485,12 +1576,27 @@ elif [ "$YELLOW" -gt 0 ]; then
   echo ""
   echo "  Warnings (report to Matt, may proceed with acknowledgement):"
   for w in "${WARNINGS[@]}"; do echo "    - $w"; done
+  if [ "$ACCEPTED" -gt 0 ]; then
+    echo ""
+    echo "  Known-accepted state ($ACCEPTED — listed separately so it never pads the count above):"
+    for a in "${ACCEPTED_NOTES[@]}"; do echo "    ℹ $a"; done
+  fi
   echo ""
   echo "  Proceed with the USAGE REMINDERS above as your routing contract."
   echo "═══════════════════════════════════════════════════════"
   exit 1
 else
   echo "  ✓ VERDICT: READY — all limitless-stack tools green. Proceed."
+  # READY does NOT mean "nothing is wrong anywhere" — it means nothing here is
+  # drift a session can act on. Accepted state is still printed at READY on
+  # purpose: silence would let a permanent blocker (the Pinecone cap) fade out of
+  # every session's view, and a session that forgets the corpus is stale will
+  # report an empty search as "no hits" instead of "not searched".
+  if [ "$ACCEPTED" -gt 0 ]; then
+    echo ""
+    echo "  Known-accepted state ($ACCEPTED — real, but not this session's to clear):"
+    for a in "${ACCEPTED_NOTES[@]}"; do echo "    ℹ $a"; done
+  fi
   echo "  Follow the USAGE REMINDERS above for every tool interaction this session."
   echo "═══════════════════════════════════════════════════════"
   exit 0

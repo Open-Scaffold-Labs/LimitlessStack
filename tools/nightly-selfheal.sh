@@ -279,11 +279,23 @@ fi
 log "outcome: $TITLE  [passes=$PASS healed=$HEALED needs_human=$NEEDS_HUMAN correctors=${UNIQ_CORR:-none}]"
 
 # ── State file (machine-readable, read by next preflight) ──
+# actionable is appended LAST so every existing argv index is undisturbed.
+# It is published because THIS script is the only place that classifies a finding
+# as actionable (ACCEPTED_RE above). The preflight used to read residual_findings
+# — which holds ALL of them — and report the raw count, so one real finding got
+# announced as five with the real one buried. Publishing the classifier's own
+# answer keeps a single evaluator instead of making the preflight re-derive it.
+# (2026-08-20)
 STATE_JSON="$(python3 - "$VERDICT" "$PF_GREEN" "$PF_YELLOW" "$PF_RED" "$PASS" \
-                         "$HEALED" "$HOST" "${UNIQ_CORR:-}" "$PF_FINDINGS" "$NEEDS_HUMAN" <<'PY'
+                         "$HEALED" "$HOST" "${UNIQ_CORR:-}" "$PF_FINDINGS" "$NEEDS_HUMAN" \
+                         "${RESIDUAL_ACTIONABLE:-}" <<'PY'
 import json, sys, datetime
 verdict, green, yellow, red, passes, healed, host, corr, findings, needs_human = sys.argv[1:11]
+actionable = sys.argv[11] if len(sys.argv) > 11 else ""
+actionable_list = [l for l in actionable.splitlines() if l.strip()]
 print(json.dumps({
+  "actionable_findings": actionable_list,
+  "actionable_n":        len(actionable_list),
   "last_run":        datetime.datetime.now(datetime.timezone.utc)
                          .strftime("%Y-%m-%dT%H:%M:%SZ"),
   "final_verdict":   verdict,

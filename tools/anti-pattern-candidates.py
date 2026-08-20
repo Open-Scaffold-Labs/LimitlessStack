@@ -44,7 +44,7 @@ LOG  = os.path.join(VAULT, "wiki", "log.md")
 # tripped the review trigger at all. The gatherer for the anti-patterns loop had the
 # exact blind spot the loop exists to catch.
 MISTAKE_OPS = ("refactor", "schema", "lint",
-               "fix", "correction", "retraction", "build", "audit")
+               "fix", "correction", "retraction", "build", "audit", "test")
 
 
 def _read(path):
@@ -91,21 +91,33 @@ def existing_anti_patterns(text):
 
 
 def recent_mistake_log(text, n):
-    """Return the newest N log entries whose op is in MISTAKE_OPS. log.md is
-    newest-first, entries start with '## [YYYY-MM-DD] <op> | <label>'."""
+    """Return the newest N log entries whose op is in MISTAKE_OPS.
+
+    ORDER-AGNOSTIC BY DATE, deliberately (fixed 2026-08-19). This used to read
+    from the TOP of the file assuming "log.md is newest-first" — an assumption
+    codified during the 2026-08-05..07 sessions, which PREPENDED their entries.
+    The documented convention (log.md's own header: "Append-only chronological
+    record"; CLAUDE.md's grep-|-tail hint) and every session since 08-08 is
+    newest at the BOTTOM — so the gather returned 08-07 entries as "newest"
+    while 33 newer entries sat unread at the tail, and the 2026-08-19 rec #5
+    review nearly ran on a 12-day-stale corpus. The fix keys on the entry's own
+    date — a property it cannot avoid having (anti-pattern #65's addendum) —
+    instead of its file position. Within one date, later file position wins:
+    correct for the appended region, where every future entry lands."""
     parts = re.split(r"(?m)^(## \[\d{4}-\d{2}-\d{2}\][^\n]*)$", text)
     # parts = [pre, header1, body1, header2, body2, ...]
     entries = []
     for k in range(1, len(parts), 2):
         header = parts[k].strip()
         body = parts[k + 1] if k + 1 < len(parts) else ""
-        om = re.match(r"## \[\d{4}-\d{2}-\d{2}\]\s+(\w+)\s*\|", header)
-        op = om.group(1) if om else ""
+        om = re.match(r"## \[(\d{4}-\d{2}-\d{2})\]\s+(\w+)\s*\|", header)
+        if not om:
+            continue
+        date, op = om.group(1), om.group(2)
         if op in MISTAKE_OPS:
-            entries.append((header, body.strip()))
-        if len(entries) >= n:
-            break
-    return entries
+            entries.append((date, k, header, body.strip()))
+    entries.sort(key=lambda e: (e[0], e[1]), reverse=True)
+    return [(header, body) for _, _, header, body in entries[:n]]
 
 
 def review_due():
