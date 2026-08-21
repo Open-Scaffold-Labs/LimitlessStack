@@ -1009,19 +1009,19 @@ else
   # 50-source Standard-tier cap. At the cap, `source add` fails with an
   # opaque "Failed to get SOURCE_ID from registration response" error —
   # hit on the-match's default bucket 2026-07-06 (50/50). Threshold: 47.
-  CAPS_OUT=$(python3.11 "$VAULT/tools/notebooklm-wiki-refresh.py" --check-caps --skip-auth-check 2>&1)
-  CAPS_EXIT=$?
-  if [ "$CAPS_EXIT" -eq 0 ]; then
-    ok "notebook capacity: all routed notebooks under the near-cap threshold (47/50)"
-  elif [ "$CAPS_EXIT" -eq 1 ]; then
-    while IFS=$'\t' read -r cap_id cap_label cap_count cap_cap; do
-      [ -z "$cap_id" ] && continue
-      warn "notebook '$cap_label' ($cap_id) at $cap_count/$cap_cap sources — adds fail at the cap" \
-           "consolidate or exclude sources (see the handoffs-rollup pattern, the-match 2026-07-06)"
-    done <<< "$CAPS_OUT"
-  else
-    warn "notebook capacity check failed (exit=$CAPS_EXIT)" "$CAPS_OUT"
-  fi
+  # 2026-08-21 (Matt-approved): launched in the BACKGROUND and joined after
+  # the dedupe sweep below. This check fetches the same per-notebook source
+  # listings the sweep fetches; running the two serially (14.5s + 61.8s
+  # measured) put the whole preflight (~105s cold) past Cowork's ~60s
+  # tool-call cap, which made Roll Call look hung from a session — it never
+  # was; the timed-out call kept running and exited WARN. Only the FETCH
+  # overlaps: the ok/warn interpretation happens at the join in the main
+  # shell, because counter increments would not propagate out of a
+  # background job. Output-order note: the capacity verdict line now prints
+  # after the dedupe-sweep line instead of before the freshness block.
+  CAPS_TMP=$(mktemp /tmp/preflight-caps.XXXXXX)
+  python3.11 "$VAULT/tools/notebooklm-wiki-refresh.py" --check-caps --skip-auth-check > "$CAPS_TMP" 2>&1 &
+  CAPS_BG_PID=$!
 
   # Per-project notebook freshness — each routed file compared against its route's state file.
   # Routes come from the project manifest's NOTEBOOKLM.routes list. Empty routes
@@ -1231,8 +1231,11 @@ except Exception:
   # after the original single-cdaa7a43 check (which was reporting clean
   # for weeks while ab4b7ccb and ca083f4f were silently accumulating 13
   # duplicates between them — caught by an end-of-session manual sweep).
-  # Each `notebooklm source list` call is ~1-2s, so 7 notebooks add ~10s
-  # to the preflight. Worth it: this is the layer Claude reads at the
+  # Each `notebooklm source list` call measured 2-4s in isolation but
+  # ~7.5s under the preflight's own back-to-back request pressure
+  # (timed 2026-08-21: 61.8s for 8 serial calls) — which is why the fetch
+  # phase below runs all notebooks concurrently, capped by the slowest
+  # single call. Worth it: this is the layer Claude reads at the
   # start of every session, and stale reminder content has cost real
   # debugging time before (see anti-pattern #12).
   if command -v python3.11 >/dev/null 2>&1; then
@@ -1249,6 +1252,25 @@ except Exception:
     sweep_total=0
     sweep_dirty=""
     sweep_skipped=0
+    # Fetch phase (parallel, 2026-08-21): every notebook's listing lands in
+    # its own temp file; the counting loop below then reads the files. Each
+    # fetch also records its exit code in a sidecar file — nonzero routes
+    # that notebook to the skipped tally BEFORE the JSON is read (see the
+    # audit note at the counter: the CLI can fail while emitting parseable
+    # error-JSON, which would otherwise count as clean). Explicit --notebook ids
+    # (never `use`, see the 2026-08-03 note in the counting loop) are what
+    # make concurrent calls safe. We wait on the fetch pids ONLY — a bare
+    # `wait` would also reap the backgrounded capacity check and break its
+    # join below.
+    SWEEP_DIR=$(mktemp -d /tmp/preflight-sweep.XXXXXX)
+    SWEEP_PIDS=""
+    for entry in $notebooks; do
+      nb_id="${entry%%:*}"
+      nb_label="${entry##*:}"
+      ( notebooklm source list --notebook "$nb_id" --json > "$SWEEP_DIR/$nb_label.json" 2>/dev/null; echo $? > "$SWEEP_DIR/$nb_label.exit" ) &
+      SWEEP_PIDS="$SWEEP_PIDS $!"
+    done
+    for _pid in $SWEEP_PIDS; do wait "$_pid" 2>/dev/null; done
     for entry in $notebooks; do
       nb_id="${entry%%:*}"
       nb_label="${entry##*:}"
@@ -1266,8 +1288,20 @@ except Exception:
       # session running the deduper, the nightly self-heal) can read the wrong
       # bucket. Proven live 2026-08-03. Explicit ids are also what the CLI's
       # own docs prescribe for parallel workflows.
-      DUPE_COUNT=$(notebooklm source list --notebook "$nb_id" --json 2>/dev/null | \
-                   python3.11 -c "
+      # Audit fault-injection (2026-08-21) caught this: the CLI can FAIL
+      # (exit 1) while still emitting parseable {'error': true} JSON on
+      # stdout — json.load parses it, finds no 'sources', and a notebook we
+      # never actually listed counts as CLEAN (0) instead of skipped. The
+      # hole predates the parallel fetch: the old inline pipe discarded the
+      # CLI's exit code the same way (verified — the bogus-id case printed
+      # 0 through both forms). The sidecar exit code is the authoritative
+      # signal, checked before the JSON is looked at; a missing sidecar
+      # (fetch job killed) also routes to skipped.
+      FETCH_EXIT=$(cat "$SWEEP_DIR/$nb_label.exit" 2>/dev/null || echo 1)
+      if [ "$FETCH_EXIT" != "0" ]; then
+        DUPE_COUNT=-1
+      else
+      DUPE_COUNT=$(python3.11 -c "
 import json, sys, pathlib
 from collections import defaultdict
 try:
@@ -1294,7 +1328,8 @@ try:
     print(total)
 except Exception:
     print(-1)
-" "$VAULT/tools/.notebooklm-$nb_label-state.json" 2>/dev/null || echo -1)
+" "$VAULT/tools/.notebooklm-$nb_label-state.json" < "$SWEEP_DIR/$nb_label.json" 2>/dev/null || echo -1)
+      fi
       if [ "$DUPE_COUNT" = "-1" ] || [ -z "$DUPE_COUNT" ]; then
         # CLI unavailable / parse failed for this notebook — count toward
         # the skipped tally so the summary line reflects coverage gaps.
@@ -1321,6 +1356,28 @@ except Exception:
       ok "notebooklm dedupe sweep: 0 duplicates across $((8 - sweep_skipped))/8 notebooks ($sweep_skipped skipped)"
     fi
     # If sweep_dirty is non-empty, individual warns above already covered it.
+    rm -rf "$SWEEP_DIR"
+  fi
+
+  # Join the capacity check backgrounded before the freshness block
+  # (2026-08-21). Interpretation lives HERE, in the main shell — ok/warn
+  # counter increments would not survive a background subshell. Guarded so
+  # a manifest path that skipped the launch cannot hit an unset pid.
+  if [ -n "${CAPS_BG_PID:-}" ]; then
+    wait "$CAPS_BG_PID" && CAPS_EXIT=0 || CAPS_EXIT=$?
+    CAPS_OUT=$(cat "$CAPS_TMP" 2>/dev/null)
+    rm -f "$CAPS_TMP"
+    if [ "$CAPS_EXIT" -eq 0 ]; then
+      ok "notebook capacity: all routed notebooks under the near-cap threshold (47/50)"
+    elif [ "$CAPS_EXIT" -eq 1 ]; then
+      while IFS=$'\t' read -r cap_id cap_label cap_count cap_cap; do
+        [ -z "$cap_id" ] && continue
+        warn "notebook '$cap_label' ($cap_id) at $cap_count/$cap_cap sources — adds fail at the cap" \
+             "consolidate or exclude sources (see the handoffs-rollup pattern, the-match 2026-07-06)"
+      done <<< "$CAPS_OUT"
+    else
+      warn "notebook capacity check failed (exit=$CAPS_EXIT)" "$CAPS_OUT"
+    fi
   fi
 fi
 echo ""
@@ -1453,6 +1510,23 @@ else
   bad "anti-patterns file missing" "expected at $ANTIPATTERNS_FILE"
 fi
 echo ""
+
+# ── Own-runtime watchdog ────────────────────────────────
+# Added 2026-08-21 per the Roll Call self-improvement rule, the same day the
+# preflight was found to have outgrown Cowork's ~60s tool-call cap (105s
+# cold): every foreground Roll Call "timed out", reading as a hung/broken
+# stack while the script was actually fine — it kept running and exited
+# WARN. Checks accrete (three commits on 2026-08-20 alone), so runtime
+# creep is a recurring drift mode and nothing else watches it. Threshold
+# 50s: post-parallelization full runs measure 26-28s warm, so a warn here
+# means real creep, not noise. Placed BEFORE the payload build so it
+# lands in the yellow tally, the Hub POST, and the verdict. $SECONDS is
+# bash's seconds-since-start builtin; the payload/POST/reminders tail adds
+# a few seconds after this point, hence warning 10s shy of the cap.
+if [ "${SECONDS:-0}" -ge 50 ]; then
+  warn "preflight took ${SECONDS}s at the watchdog — creeping toward the ~60s Cowork tool-call cap (foreground Roll Call 'timeouts' return if this grows)" \
+       "FIRST check host load (uptime — the watchdog's first live firing was load ~21 from browser/compositing, not check-creep, 2026-08-21); if load is normal, profile with per-line timestamps, find the new slow check, parallelize or background it (pattern: 2026-08-21 dedupe-sweep fix, wiki/log.md)"
+fi
 
 # ── Stack health payload → ~/.cache/ + Hub POST ─────────
 # Always builds the payload (the Hub's /today card depends on it). JSON file
