@@ -94,6 +94,37 @@ def check_hub_migrations():
             f"correct the row in {HUB}/CLAUDE.md (renamed file?), or restore the migration")
 
 
+def check_readme_migrations():
+    """A2. Same parity check against README.md — the fresh-clone entry point.
+
+    Added 2026-08-23: the CLAUDE.md table was correct and passed, while README's
+    stopped at 011 with 15 files on disk. Check A only ever read one file, so a
+    green there said nothing about the document a new reader opens first.
+    """
+    mig_dir = os.path.join(HUB, "migrations")
+    if not os.path.isdir(mig_dir):
+        note_skip("README migration table: migrations/ not found")
+        return
+    if not os.path.exists(HUB_README):
+        note_skip(f"README migration table: {HUB_README} not readable")
+        return
+    txt = _read(HUB_README)
+    claimed = set(_MIG_ROW.findall(txt))
+    if not claimed:
+        note_skip("README migration table: no table rows parsed — nothing to compare "
+                  "(coverage floor: not reporting a green on an empty set)")
+        return
+    files = {os.path.basename(f) for f in glob.glob(os.path.join(mig_dir, "*.sql"))
+             if _MIG_FILE.match(os.path.basename(f))}
+    for name in sorted(files - claimed):
+        add(f"migration {name} exists but is NOT in the README migration table",
+            f"add its row to {HUB}/README.md (CLAUDE.md's table is checked separately "
+            f"and can be correct while this one rots)")
+    for name in sorted(claimed - files):
+        add(f"README migration table lists {name} but no such file exists",
+            f"correct the row in {HUB}/README.md")
+
+
 # -- Check B -- self-referential backtick file-path claims exist --------------
 _PATH_RE = re.compile(
     r"`([~A-Za-z0-9_.][~A-Za-z0-9_./-]*/[A-Za-z0-9_./-]+\.(?:js|ts|tsx|sql|md|json|sh|py|yml|yaml))`"
@@ -160,9 +191,201 @@ def check_notebook_ids():
                 "reconcile CLAUDE.md with .limitless-project.py / tools/notebooklm-wiki-refresh.py")
 
 
+
+# ============================================================================
+# Checks D/E/F added 2026-08-23 after a sweep found 25 rot sites in one day.
+# Each maps to a failure that ACTUALLY happened, not a hypothetical:
+#   D  `/pinecone` was cited as a route in 4 documents; it is a sidebar LABEL
+#      whose path is `/search`. Navigating to it hits <ComingSoon/>.
+#   E  Two trust anchors disagreed on the migration count (11 vs 15). A session
+#      trusting the low number writes migrations/012_*.sql on top of an existing
+#      012.
+#   F  "Matt has Fly.io access" lived in 7 places and got flipped 5 times: one
+#      bad probe poisons one page, and the next session finds a different page
+#      first. A fact asserted in 7 places has no truth value, only a majority
+#      vote that changes with reading order.
+#
+# All three obey this file's stated design principle: CONSERVATIVE about false
+# positives (a noisy check trains humans to ignore the preflight), HONEST about
+# false silence (anything unverifiable is an explicit SKIP, never a silent pass).
+# ============================================================================
+
+HUB_APP  = os.path.join(HUB, "client", "src", "App.jsx")
+HUB_NAV  = os.path.join(HUB, "client", "src", "components", "shell", "nav-config.js")
+HUB_README = os.path.join(HUB, "README.md")
+WIKI_HUB_PAGE = os.path.join(VAULT, "wiki", "apps", "limitless-stack-hub.md")
+
+# Documents that speak about the Hub in the present tense and are read as truth.
+_HUB_DOCS = [(HUB_CLAUDE, "Hub CLAUDE.md"), (HUB_README, "Hub README.md"),
+             (WIKI_HUB_PAGE, "wiki apps/limitless-stack-hub.md")]
+
+# A mention is EXCUSED when the line explicitly says the thing is not a route.
+# Deliberately requires an EXPLICIT marker: an earlier draft excused any line
+# that merely contained some other real route, and that would have excused the
+# original bug verbatim ("- **Memory**: `/wiki`, `/pinecone`, `/notebooks`").
+_ROUTE_EXCUSE = ("label", "not a route", "corrected", "renamed", "phantom",
+                 "does not exist", "falls through")
+
+
+def _hub_routes():
+    """Real routes = the cases the Hub router actually handles."""
+    if not os.path.exists(HUB_APP):
+        return None
+    return set(re.findall(r'case\s+"(/[a-z0-9/-]*)"', _read(HUB_APP)))
+
+
+def _nav_pairs():
+    """[(label, path)] from the sidebar config."""
+    if not os.path.exists(HUB_NAV):
+        return None
+    txt = _read(HUB_NAV)
+    return re.findall(r'label:\s*"([^"]+)"[^}]*?path:\s*"(/[a-z0-9/-]*)"', txt)
+
+
+def check_phantom_routes():
+    """D. A sidebar LABEL whose path differs, cited in a doc as if it were a route.
+
+    Scoped to exactly that class on purpose. A general "every backticked /x must
+    be a route" check was PROTOTYPED AND REJECTED 2026-08-23: measured against
+    the live docs it produced 3 false positives (`/compare`, `/page`, `/user` —
+    GitHub-API path fragments) while excusing the real bug. This version is
+    self-maintaining: it derives the phantom set from nav-config, so the NEXT
+    label/path divergence is caught with no code change.
+    """
+    routes = _hub_routes()
+    pairs = _nav_pairs()
+    if routes is None or pairs is None:
+        note_skip("phantom routes: Hub client source not readable (App.jsx / nav-config.js)")
+        return
+    if not routes or not pairs:
+        note_skip("phantom routes: parsed 0 routes or 0 nav entries — refusing to report a green "
+                  "on an empty set (coverage floor)")
+        return
+    phantoms = {}
+    for label, path in pairs:
+        guess = "/" + re.sub(r"[^a-z0-9-]", "", label.lower())
+        if guess != path and guess not in routes and len(guess) > 2:
+            phantoms[guess] = (label, path)
+    if not phantoms:
+        return
+    for doc, name in _HUB_DOCS:
+        if not os.path.exists(doc):
+            note_skip(f"phantom routes: {name} not readable")
+            continue
+        for i, line in enumerate(_read(doc).splitlines(), 1):
+            low = line.lower()
+            if any(tok in low for tok in _ROUTE_EXCUSE):
+                continue
+            for ph, (label, path) in phantoms.items():
+                if f"`{ph}`" in line:
+                    add(f"{name}:{i} cites `{ph}` as a route, but that is the sidebar LABEL "
+                        f"\"{label}\" — the real path is `{path}`",
+                        f"use `{path}`, or say explicitly on that line that `{ph}` is a label "
+                        f"(the checker excuses lines containing: {', '.join(_ROUTE_EXCUSE)})")
+
+
+_NUMWORD = {"one":1,"two":2,"three":3,"four":4,"five":5,"six":6,"seven":7,"eight":8,
+            "nine":9,"ten":10,"eleven":11,"twelve":12,"thirteen":13,"fourteen":14,
+            "fifteen":15,"sixteen":16,"seventeen":17,"eighteen":18,"nineteen":19,"twenty":20}
+
+
+def check_prose_counts():
+    """E. Counts stated in prose vs the count on disk.
+
+    Only two nouns are checked — `migrations` and `routes`/`router cases` — both
+    of which broke on 2026-08-23. `pages` is deliberately NOT checked: the vault
+    says "150 pages" about the WIKI and the Hub says "17 pages" about itself, and
+    no regex can tell those apart without guessing. Leaving it out is the
+    conservative call, not an oversight.
+    """
+    mig_dir = os.path.join(HUB, "migrations")
+    real_mig = len([f for f in glob.glob(os.path.join(mig_dir, "*.sql"))
+                    if _MIG_FILE.match(os.path.basename(f))]) if os.path.isdir(mig_dir) else None
+    routes = _hub_routes()
+    real_routes = len(routes) if routes else None
+    if real_mig is None and real_routes is None:
+        note_skip("prose counts: neither migrations/ nor App.jsx readable")
+        return
+    pat = re.compile(r"\b(\d{1,3}|" + "|".join(_NUMWORD) + r")\s+(migrations|routes|router cases)\b", re.I)
+    for doc, name in _HUB_DOCS:
+        if not os.path.exists(doc):
+            continue
+        for i, line in enumerate(_read(doc).splitlines(), 1):
+            if "corrected" in line.lower() or "~~" in line:
+                continue  # an explicit correction may quote the old number
+            for raw, noun in pat.findall(line):
+                n = _NUMWORD.get(raw.lower(), None)
+                if n is None:
+                    try: n = int(raw)
+                    except ValueError: continue
+                noun_l = noun.lower()
+                if noun_l == "migrations" and real_mig is not None and n != real_mig:
+                    add(f"{name}:{i} claims {raw} migrations; migrations/ holds {real_mig}",
+                        f"correct the number in {name} (a low count makes the next session "
+                        f"collide on an existing migration file)")
+                elif noun_l in ("routes", "router cases") and real_routes is not None and n != real_routes:
+                    add(f"{name}:{i} claims {raw} {noun}; App.jsx handles {real_routes}",
+                        f"correct the number in {name}, or re-count if the router changed")
+
+
+# F. Facts that are NOT derivable from the system — they are facts about the
+# world — get exactly ONE owner page. Everyone else links; nobody restates.
+# Seeded with the Fly-access fact, which flipped five times across seven pages.
+_CANONICAL_FACTS = [
+    {
+        "id": "fly-access",
+        "owner": "wiki/concepts/limitless-stack.md",
+        "link": "[[concepts/limitless-stack]]",
+        "markers": [r"fly\.?io access", r"\bfly access\b"],
+        # log.md is append-only history (restating a fact there is CORRECT — it
+        # records what was believed on a date); the rollup is machine-generated.
+        "exempt": ["wiki/log.md", "wiki/synthesis/hub-handoffs-rollup.md",
+                   "wiki/concepts/limitless-stack.md"],
+    },
+]
+
+
+def check_canonical_facts():
+    """F. Warn when a registered fact is restated somewhere that does not link home."""
+    wiki_root = os.path.join(VAULT, "wiki")
+    if not os.path.isdir(wiki_root):
+        note_skip("canonical facts: wiki/ not found")
+        return
+    files = glob.glob(os.path.join(wiki_root, "**", "*.md"), recursive=True)
+    if not files:
+        note_skip("canonical facts: scanned 0 wiki files — refusing to report a green on an "
+                  "empty set (coverage floor)")
+        return
+    for fact in _CANONICAL_FACTS:
+        owner = fact["owner"]
+        if not os.path.exists(os.path.join(VAULT, owner)):
+            note_skip(f"canonical fact '{fact['id']}': owner page {owner} missing")
+            continue
+        pats = [re.compile(m, re.I) for m in fact["markers"]]
+        for path in sorted(files):
+            rel = os.path.relpath(path, VAULT)
+            if any(rel == e or rel.endswith(e) for e in fact["exempt"]):
+                continue
+            txt = _read(path)
+            hits = [m for p in pats for m in p.finditer(txt)]
+            if not hits:
+                continue
+            # PROXIMITY, not file-presence. An earlier draft accepted the link
+            # anywhere in the file; a mutation test (2026-08-23) showed that a
+            # long page linking to the owner for an UNRELATED reason bought a
+            # free pass on restating the fact — the check produced real findings
+            # on the baseline while being toothless on the case it exists for.
+            # The link must sit beside the restatement to excuse it.
+            if all(fact["link"] in txt[max(0, m.start() - 400):m.end() + 400] for m in hits):
+                continue  # every restatement points home — acceptable
+            add(f"{rel} states the '{fact['id']}' fact without linking to its owner page nearby",
+                f"link {fact['link']} instead of restating it — this fact flipped five times "
+                f"because it lived in seven places with no owner")
+
 def main():
     try:
         check_hub_migrations()
+        check_readme_migrations()
         # Per-repo allowlists: only paths that DEFINITELY live in that repo.
         # Vault owns tools/ + the installed skills; the Hub owns its app source
         # and its own docs/ (but docs/migrations/* is an OF-repo path — excluded
@@ -170,6 +393,9 @@ def main():
         check_paths(VAULT_CLAUDE, VAULT, "vault", ("tools/", "~/.claude/skills/"))
         check_paths(HUB_CLAUDE, HUB, "Hub", ("server/", "api/", "client/", "migrations/", "docs/"))
         check_notebook_ids()
+        check_phantom_routes()
+        check_prose_counts()
+        check_canonical_facts()
     except Exception as exc:  # never crash the preflight — degrade to exit 2
         sys.stderr.write(f"trust-anchor-check error: {exc}\n")
         return 2
