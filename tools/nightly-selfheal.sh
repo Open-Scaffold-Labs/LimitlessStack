@@ -233,16 +233,25 @@ if [ "$START_RC" -ne 0 ] && [ "$PF_RC" -eq 0 ]; then HEALED="true"; fi
 #     by any corrector until the monthly cap resets.
 #   • "uncommitted files in vault" — human-gated by policy (the nightly must
 #     NEVER commit), so escalating it every morning is pure noise.
-#   • "last nightly self-heal ended ..." — the preflight's [meta] readout of the
-#     nightly's OWN prior state. Counting it as actionable creates a LATCH: once
-#     a run ends needs_human=true, every later run re-reads that warn as fresh
-#     drift and can never self-clear. Excluding it lets a genuinely-clean night
-#     report clean. (The preflight still shows it to a HUMAN at Roll Call.)
+#   • "last nightly self-heal ..." — the preflight's [meta] readout of the
+#     nightly's OWN prior state, in ANY of its phrasings. Counting it as
+#     actionable creates a LATCH: once a run ends needs_human=true, every later
+#     run re-reads that warn as fresh drift and can never self-clear. Excluding
+#     it lets a genuinely-clean night report clean. (The preflight still shows
+#     it to a HUMAN at Roll Call.)
+#     ⚠ 2026-08-22: this guard originally matched only the legacy phrasing
+#     "last nightly self-heal ended". The preflight later grew three sibling
+#     formats ("last nightly self-heal: N actionable…", the needs_human-
+#     disagreement line, the STALE line) and the latch RETURNED through the
+#     unmatched ones — double-nested messages in the state file proved it
+#     (#34-shaped: the guard was not a strict superset of the message family).
+#     Now matched on the stable prefix: every "last nightly self-heal" line is
+#     self-referential BY CONSTRUCTION when the nightly itself is the reader.
 # Matched by finding IDENTITY, not a loose keyword (the old 'quota' substring
 # could suppress a real finding that merely contained the word). uncommitted +
 # tightening added per the 2026-07-23 design audit; the self-referential latch
 # was caught by running the nightly twice that same day.
-ACCEPTED_RE='Pinecone embedding quota exhausted|newer than last Pinecone sync|uncommitted files in vault|last nightly self-heal ended|anti-pattern review due'
+ACCEPTED_RE='Pinecone embedding quota exhausted|newer than last Pinecone sync|uncommitted files in vault|last nightly self-heal|anti-pattern review due'
 RESIDUAL_ACTIONABLE=""
 if [ "$PF_RC" -ne 0 ]; then
   RESIDUAL_ACTIONABLE="$(printf '%s\n' "$PF_FINDINGS" | grep -viE "$ACCEPTED_RE" | grep -v '^[[:space:]]*$' || true)"
