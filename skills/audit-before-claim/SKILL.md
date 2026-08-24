@@ -208,6 +208,51 @@ one the rest of the file guards. Memory-quoted numbers and research-you-did-not-
 same error — trusting what you believe over what is written down and checkable. The fix is the
 same too: go read the artifact before asserting.
 
+## "It's broken / missing / never decided" is a claim about the HISTORY
+
+Same failure as the section above, different costume. A recommendation that contradicts research
+we already hold is a factual error; so is **an assertion that something is broken, absent, or was
+never decided, when the history says otherwise.** Both are trusting what you believe over what is
+written down and checkable.
+
+**The trigger — four claim shapes, not all claims:**
+
+> Before asserting **broken · missing · not built · should be changed**, run
+> `tools/recall.sh <subject noun>` and paste the result into your reasoning.
+
+**Search the SUBJECT, never the artifact.** A branch name, gameplan name, or filename is what the
+work was *called*; the ruling that governs it is filed under what it was *about*. This is the
+whole failure mode, and it has three recorded instances, two of them repeats of each other:
+
+- `wiki/log.md:157` — searched `fix/fi-department-scoping` (2 incidental hits) and never
+  `station_id`. Called an INTENTIONAL design a cross-tenant bug. **Second time on that same line
+  of code.** The session's own conclusion: *"The decisive query — `grep 'P7|station_id-as-tenant|
+  mirror station'` — took nine seconds."*
+- `wiki/log.md:8306` — searched the gameplan, never `companion` / form factor. **Third
+  occurrence**, and Matt had used nearly the same words twice: *"GROUND YOURSELF IN THE HISTORY."*
+- `wiki/log.md:8333` — titled *"The Stack held the facts and still could not deliver them."*
+
+**Reading the result — the exit code is load-bearing:**
+
+- **0** — hits found. Now do the work the tool cannot: decide whether these entries are **about**
+  your subject or merely **mention** it. An artifact name matches incidentally everywhere. If no
+  entry is a *ruling about the thing itself*, you searched the wrong noun — search again.
+- **1** — the search ran and found nothing. This usually means **the wrong noun, not absent
+  history.** It is not a licence to conclude "this was never decided."
+- **2** — the search did not run (empty corpus / bad invocation). Nothing was checked. An empty
+  result is meaningless unless the search actually happened.
+
+**Why this belongs in THIS skill and not in CLAUDE.md.** The corpus carries roughly 132 documented
+behavioural rules against roughly 35 mechanical checks, and every relapse traced in the 2026-08-24
+audit happened against a rule that existed **only as prose**. This skill is the component with the
+best evidenced catch record. Putting the discipline inside a mechanism that demonstrably fires
+beats adding rule #133 beside one.
+
+**Honest limitation, stated so nobody over-trusts it.** `recall.sh` surfaces; it does not reason.
+It cannot tell "about it" from "mentions it" — two heuristics for that were built and tested
+against real data on 2026-08-24, and **both passed the known-bad control**, so neither shipped.
+The discrimination is yours. The tool's only job is to make sure you cannot skip it.
+
 ## Worked examples
 
 ### Example 1 — claim of completion (the 300/448 incident)

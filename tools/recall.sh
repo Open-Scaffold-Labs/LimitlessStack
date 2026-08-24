@@ -47,6 +47,12 @@ FILES_SEARCHED=0
 LINES_SEARCHED=0
 TOTAL_HITS=0
 PATTERN=""
+# Assigned in the log block below; declared HERE so the closing summary can read
+# it under `set -u` no matter which branches ran. Referencing it before this line
+# is the use-before-define shape of anti-pattern #72 — which was reintroduced
+# into THIS FILE while writing the closing summary on 2026-08-24, third time in
+# one session. Declare first, assign later, never the reverse.
+LOG_SPAN=""
 
 usage() {
   echo "usage: tools/recall.sh [--top N] <subject-noun> [more nouns...]"
@@ -134,6 +140,23 @@ LOG_HITS=0
 if [ -r "$LOG" ]; then
   LOG_HITS="$(awk -v pat="$PATTERN" 'tolower($0) ~ pat { n++ } END { print n+0 }' "$LOG")"
   if [ "$LOG_HITS" -gt 0 ]; then
+    # Entry count + date span: the two things about a result set that CAN be
+    # stated as fact. 7 hits over 4 entries across two months reads very
+    # differently from 51 over 29, and the reader should see that before judging.
+    LOG_SPAN="$(awk -v pat="$PATTERN" '
+        /^## \[/ { d = ""
+          if (match($0, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/))
+            d = substr($0, RSTART, RLENGTH)
+          hdr = $0
+        }
+        tolower($0) ~ pat {
+          if (hdr != seen) { c++; seen = hdr
+            if (d != "") { if (lo == "" || d < lo) lo = d; if (d > hi) hi = d }
+          }
+        }
+        END {
+          if (c > 0) printf " in %d log entry(s), %s → %s", c, (lo=="" ? "?" : lo), (hi=="" ? "?" : hi)
+        }' "$LOG")"
     echo "wiki/log.md — $LOG_HITS hit(s) in $(awk -v pat="$PATTERN" '
         /^## \[/ { hdr = $0 }
         tolower($0) ~ pat { if (hdr != seen) { c++; seen = hdr } }
@@ -203,7 +226,18 @@ fi
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PATTERN" "$TOTAL_HITS" "$FILES_SEARCHED"
 } >> "$COUNTER" 2>/dev/null || true
 
-echo "$TOTAL_HITS hit(s). Log entries are listed NEWEST FIRST — start at the top,"
-echo "because a later ruling supersedes an earlier one. (File order in log.md is"
-echo "NOT chronological; these were re-sorted by each entry's own date.)"
+echo "$TOTAL_HITS hit(s)$LOG_SPAN. Listed NEWEST FIRST — start at the top, because a"
+echo "later ruling supersedes an earlier one. (log.md is NOT stored chronologically;"
+echo "these were re-sorted by each entry's own date.)"
+echo ""
+echo "⚠ REQUIRED before you conclude anything: are these hits ABOUT your subject,"
+echo "  or do they merely MENTION it? An artifact name — a branch, a gameplan, a"
+echo "  filename — matches incidentally all over the corpus and proves nothing."
+echo "  If none of these entries is a RULING about the thing itself, you searched"
+echo "  the wrong noun. Search what it is ABOUT and run again."
+echo ""
+echo "  This warning is unconditional on purpose. No heuristic reliably separates"
+echo "  'about it' from 'mentions it' — both candidates were tested on real data"
+echo "  2026-08-24 and both passed the known-bad control. The discrimination is"
+echo "  yours to make; the tool's job is to stop you skipping it."
 exit 0
