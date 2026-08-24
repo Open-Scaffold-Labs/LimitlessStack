@@ -38,7 +38,11 @@ import os
 import re
 import sys
 
-VAULT = "/Users/matthewlavin/Claude code antigravity/obsidian "  # trailing space intentional
+# Derived, not hardcoded: an absolute Mac path makes this tool inert in
+# any other environment (Cowork sandbox, CI, another machine) — the class
+# fixed across the toolchain 2026-08-24 and now gated by
+# tools/path-portability-check.py in the pre-commit hook.
+VAULT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PAGE = os.path.join(VAULT, "wiki", "synthesis", "claude-anti-patterns.md")
 
 BEGIN = "<!-- BEGIN GENERATED INDEX — edit tools/anti-pattern-index.py, never this block -->"

@@ -25,10 +25,21 @@ FAIL=0
 TMP="$(mktemp -d -t precommit)"
 trap 'rm -rf "$TMP"' EXIT
 
-# Staged shell files (Added/Copied/Modified/Renamed — never Deleted).
+# Staged files (Added/Copied/Modified/Renamed — never Deleted).
+#   STAGED     — shell only; the bash-syntax + unbound-variable loop below.
+#   STAGED_ANY — shell AND python under tools/; the path-portability gate.
+# BOTH are computed before ANY early exit. The path gate first shipped BELOW the
+# shell-only `[ -z "$STAGED" ] && exit 0`, so a python-only commit returned
+# before ever reaching it — and a deliberately-violating .py probe committed
+# clean. That is anti-pattern #61: a guard placed downstream of the check that
+# rejects its own trigger. Caught 2026-08-24 by an end-to-end probe, not by
+# reading the code.
 STAGED="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.sh$' || true)"
-[ -z "$STAGED" ] && exit 0
+STAGED_ANY="$(git diff --cached --name-only --diff-filter=ACMR \
+              | grep -E '^tools/.*\.(sh|py)$' || true)"
+[ -z "$STAGED" ] && [ -z "$STAGED_ANY" ] && exit 0
 
+if [ -n "$STAGED" ]; then
 echo ""
 echo "pre-commit: checking staged shell files"
 
@@ -71,8 +82,43 @@ if printf '%s\n' "$STAGED" | grep -q 'tools/limitless-preflight.sh'; then
     echo "     it needs the whole tools/ layout to execute)"
   fi
 fi
+fi   # end: shell-file checks (skipped when no .sh is staged)
 
-echo ""
+# ── Path portability (added 2026-08-24) ─────────────────
+# Covers .py AS WELL AS .sh — the loop above is shell-only, so until now every
+# Python tool in this repo committed without any gate at all, which is how two
+# of them shipped hardcoded Mac paths. Three tools were found on 2026-08-24
+# assuming the machine they were authored on and degrading to "I can't check
+# that here" everywhere else; each was fixed as an instance. This is the class.
+# STAGED_ANY is computed at the TOP of this file — see the note there about why.
+if [ -n "$STAGED_ANY" ] && [ -f "$TOOLS/path-portability-check.py" ]; then
+  PP_FILES=()
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    pp_copy="$TMP/pp_$(echo "$f" | tr '/' '_')"
+    if git show ":$f" > "$pp_copy" 2>/dev/null; then
+      # Keep the extension: the checker parses .py docstrings differently.
+      mv "$pp_copy" "$pp_copy.${f##*.}"
+      PP_FILES+=("$pp_copy.${f##*.}")
+    fi
+  done <<< "$STAGED_ANY"
+  if [ "${#PP_FILES[@]}" -gt 0 ]; then
+    echo "pre-commit: checking staged paths for portability"
+    # The marker must sit on the EXPANSION line itself — the checker matches per
+    # line, and a reason written on the line above is not seen (learned the hard
+    # way, same night). :- is wrong here: it would pass an empty string as a
+    # filename and the checker would report "cannot read" instead of running.
+    if ! pp_out="$(python3.11 "$TOOLS/path-portability-check.py" "${PP_FILES[@]}" 2>&1)"; then   # unbound-ok: guarded non-empty by the [ ${#PP_FILES[@]} -gt 0 ] test above
+      # Restore real filenames in the report — the temp copies are unreadable.
+      printf '%s\n' "$pp_out" | sed 's|pp_tools_|tools/|; s|\.sh\.sh$|.sh|' | sed 's/^/  /'
+      FAIL=1
+    else
+      echo "  ✓ no unconditional machine-specific paths"
+    fi
+    echo ""
+  fi
+fi
+
 if [ "$FAIL" -ne 0 ]; then
   echo "  COMMIT BLOCKED. Fix the findings above, or — if a flagged line is"
   echo "  genuinely safe — mark that line with an explicit reason:"

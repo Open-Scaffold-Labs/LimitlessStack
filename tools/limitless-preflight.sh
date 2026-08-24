@@ -432,7 +432,7 @@ fi
 # and prose-only for the other two, which is exactly how a local commit sits
 # unpushed overnight without anything noticing.
 # Read-only: reports, never commits. Missing repo = skip, not a warning.
-for _sib in "/Users/matthewlavin/limitless-stack-hub:Hub" \
+for _sib in "${HUB_REPO:-$HOME/limitless-stack-hub}:Hub" \
             "$LIMITLESS_STACK_HOME:LimitlessStack"; do
   _sib_path="${_sib%%:*}"; _sib_name="${_sib##*:}"
   if [ -d "$_sib_path/.git" ]; then

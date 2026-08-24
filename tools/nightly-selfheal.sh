@@ -34,8 +34,13 @@ set -u
 # git, curl all live in /opt/homebrew/bin or /usr/bin.
 export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
-VAULT="/Users/matthewlavin/Claude code antigravity/obsidian "
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Derived from SCRIPT_DIR (tools/ sits directly under the vault), not hardcoded.
+# An absolute Mac path pins a tool to one machine and makes it degrade to
+# "I can't check that here" anywhere else — the class swept out of the toolchain
+# 2026-08-24 and now blocked at commit by tools/path-portability-check.py.
+# Order matters: SCRIPT_DIR must be assigned BEFORE this line.
+VAULT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PREFLIGHT="$SCRIPT_DIR/limitless-preflight.sh"
 STATE_FILE="$SCRIPT_DIR/.nightly-selfheal-state.json"
 LOG_DIR="$SCRIPT_DIR/logs"
