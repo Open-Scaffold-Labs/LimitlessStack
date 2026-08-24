@@ -362,6 +362,7 @@ def check_canonical_facts():
             note_skip(f"canonical fact '{fact['id']}': owner page {owner} missing")
             continue
         pats = [re.compile(m, re.I) for m in fact["markers"]]
+        offenders = []
         for path in sorted(files):
             rel = os.path.relpath(path, VAULT)
             if any(rel == e or rel.endswith(e) for e in fact["exempt"]):
@@ -378,9 +379,22 @@ def check_canonical_facts():
             # The link must sit beside the restatement to excuse it.
             if all(fact["link"] in txt[max(0, m.start() - 400):m.end() + 400] for m in hits):
                 continue  # every restatement points home — acceptable
-            add(f"{rel} states the '{fact['id']}' fact without linking to its owner page nearby",
-                f"link {fact['link']} instead of restating it — this fact flipped five times "
-                f"because it lived in seven places with no owner")
+            offenders.append(rel)
+        # ONE finding per fact, not one per page. MEASURED 2026-08-23: a
+        # registered fact is mentioned on 9-14 wiki pages, so per-page findings
+        # would fire a 9-14 warning BURST the moment anyone registers a new
+        # fact — and five casual registrations would be a ~50-warning wall.
+        # That is precisely the cry-wolf failure this file's design principle
+        # names. Aggregating keeps the signal and caps the noise at 1 per fact.
+        if offenders:
+            shown = ", ".join(offenders[:3])
+            more = f" (+{len(offenders) - 3} more)" if len(offenders) > 3 else ""
+            add(f"{len(offenders)} page(s) state the '{fact['id']}' fact without linking to its "
+                f"owner page nearby: {shown}{more}",
+                f"link {fact['link']} beside each mention instead of restating it — "
+                f"owner page is {owner}. NOTE: registering a new fact typically surfaces "
+                f"~9-14 sites; clean them in the same session you register it, or the next "
+                f"session inherits a wall of warnings.")
 
 def main():
     try:

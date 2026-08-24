@@ -376,6 +376,32 @@ else
   warn "vault is not a git repo" "check vault location; end-of-session commit/push won't work"
 fi
 
+# Sibling repos' git state. ADDED 2026-08-23 after a clause-by-clause audit of
+# CLAUDE.md step 0.4 ("leave nothing dirty in EVERY repo touched") found the
+# preflight checked the VAULT only — 0 checks for the Hub or the canonical
+# LimitlessStack. So "clean" was mechanically enforced for one of three repos
+# and prose-only for the other two, which is exactly how a local commit sits
+# unpushed overnight without anything noticing.
+# Read-only: reports, never commits. Missing repo = skip, not a warning.
+for _sib in "/Users/matthewlavin/limitless-stack-hub:Hub" \
+            "$LIMITLESS_STACK_HOME:LimitlessStack"; do
+  _sib_path="${_sib%%:*}"; _sib_name="${_sib##*:}"
+  if [ -d "$_sib_path/.git" ]; then
+    _dirty=$(git -C "$_sib_path" status --porcelain 2>/dev/null | grep -vc '^??' || echo 0)
+    _ahead=$(git -C "$_sib_path" log origin/main..HEAD --oneline 2>/dev/null | wc -l | tr -d ' ')
+    if [ "${_dirty:-0}" -eq 0 ] && [ "${_ahead:-0}" -eq 0 ]; then
+      ok "$_sib_name repo clean and pushed"
+    else
+      [ "${_dirty:-0}" -gt 0 ] && warn "$_sib_name: $_dirty tracked file(s) modified" \
+        "git -C \"$_sib_path\" status --short · ask Matt before committing (untracked files are not counted)"
+      [ "${_ahead:-0}" -gt 0 ] && warn "$_sib_name: $_ahead commit(s) ahead of origin/main" \
+        "git -C \"$_sib_path\" push origin main"
+    fi
+  else
+    skip "$_sib_name git state: no repo at $_sib_path"
+  fi
+done
+
 # ── Wiki content freshness (semantic) ───────────────────
 # These three checks look at CONTENT of wiki files (not just presence /
 # timestamps), specifically for drift modes that mechanical checks miss:
