@@ -826,6 +826,29 @@ else
 fi
 echo ""
 
+echo "[meta] Task files current?"
+# Added 2026-08-24. Matt, on being shown that 385 "open" boxes contained 222
+# already-shipped/ruled/not-a-task items: "so far it couldnt" be relied on.
+# The rot was invisible because nothing ever looked: no session re-read an old
+# box, and session write-ups were being filed into the task list itself (63% of
+# Active was prose that already existed in wiki/log.md). This makes all of that
+# visible EVERY Roll Call instead of once every four months.
+if [ -f "$VAULT/tools/task-file-check.py" ]; then
+  if task_out="$(python3.11 "$VAULT/tools/task-file-check.py" --quiet 2>&1)"; then
+    ok "task files current (audited, no stale/duplicate/closed-section drift)"
+  else
+    while IFS= read -r tline; do
+      [ -z "$tline" ] && continue
+      warn "$(printf '%s' "$tline" | sed 's/^  ✗ //')" \
+           "python3.11 tools/task-file-check.py  ·  tick what you shipped, archive closed sections, keep write-ups in wiki/log.md"
+    done <<< "$task_out"
+  fi
+else
+  warn "tools/task-file-check.py missing — task-file rot is unmonitored" \
+       "cp \"$LIMITLESS_STACK_HOME/tools/task-file-check.py\" \"$VAULT/tools/\""
+fi
+echo ""
+
 echo "[meta] Nightly self-heal (Loop 5)"
 NSH_LABEL="com.openscaffold.nightly-selfheal"
 NSH_PLIST="$HOME/Library/LaunchAgents/$NSH_LABEL.plist"
