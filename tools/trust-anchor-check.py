@@ -397,19 +397,33 @@ def check_canonical_facts():
                 f"session inherits a wall of warnings.")
 
 def main():
+    # Per-repo allowlists: only paths that DEFINITELY live in that repo. Vault
+    # owns tools/ + the installed skills; the Hub owns its app source and its
+    # own docs/ (but docs/migrations/* is an OF-repo path — excluded via
+    # _SKIP_PATH).
+    CHECKS = (
+        ("hub migrations",    check_hub_migrations,    ()),
+        ("README migrations", check_readme_migrations, ()),
+        ("vault paths",       check_paths,
+            (VAULT_CLAUDE, VAULT, "vault", ("tools/", "~/.claude/skills/"))),
+        ("Hub paths",         check_paths,
+            (HUB_CLAUDE, HUB, "Hub",
+             ("server/", "api/", "client/", "migrations/", "docs/"))),
+        ("notebook ids",      check_notebook_ids,      ()),
+        ("phantom routes",    check_phantom_routes,    ()),
+        ("prose counts",      check_prose_counts,      ()),
+        ("canonical facts",   check_canonical_facts,   ()),
+    )
+    evaluated = 0
     try:
-        check_hub_migrations()
-        check_readme_migrations()
-        # Per-repo allowlists: only paths that DEFINITELY live in that repo.
-        # Vault owns tools/ + the installed skills; the Hub owns its app source
-        # and its own docs/ (but docs/migrations/* is an OF-repo path — excluded
-        # via _SKIP_PATH).
-        check_paths(VAULT_CLAUDE, VAULT, "vault", ("tools/", "~/.claude/skills/"))
-        check_paths(HUB_CLAUDE, HUB, "Hub", ("server/", "api/", "client/", "migrations/", "docs/"))
-        check_notebook_ids()
-        check_phantom_routes()
-        check_prose_counts()
-        check_canonical_facts()
+        for _label, fn, args in CHECKS:
+            before = len(skips)
+            fn(*args)
+            # A check that added no SKIP looked at something real. A check that
+            # both evaluated and skipped counts as skipped — conservative, which
+            # is the correct direction for a floor.
+            if len(skips) == before:
+                evaluated += 1
     except Exception as exc:  # never crash the preflight — degrade to exit 2
         sys.stderr.write(f"trust-anchor-check error: {exc}\n")
         return 2
@@ -417,6 +431,22 @@ def main():
         print(f"SKIP: {reason}")
     for message, fix in findings:
         print(f"{message}\t{fix}")
+
+    # AGGREGATE COVERAGE FLOOR (added 2026-08-24).
+    # Individual checks already refuse to green an empty set (see the note_skip
+    # calls in check_phantom_routes / check_canonical_facts). Nothing checked the
+    # WHOLE RUN, so a total wipe-out still returned 0 — and CLAUDE.md step 0.4
+    # defines "clean" as exit 0. Measured: from the Cowork sandbox, where neither
+    # repo is mounted, this printed 8 SKIPs and exited 0. A session could run the
+    # cleanliness gate, get a pass, and have checked nothing.
+    # 2 (not 1) because 1 means "findings" — a real, actionable list — and the
+    # preflight already maps 2 to `warn "trust-anchor check errored"`, so this
+    # surfaces without any change on the consumer side.
+    if evaluated == 0:
+        print(f"FLOOR: 0 of {len(CHECKS)} checks evaluated anything — every one "
+              f"skipped, so this run proves NOTHING about trust-anchor drift.\t"
+              f"run it where both repos are readable (Matt's Mac), not from a sandbox")
+        return 2
     return 1 if findings else 0
 
 

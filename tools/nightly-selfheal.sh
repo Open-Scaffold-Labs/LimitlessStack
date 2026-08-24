@@ -226,9 +226,31 @@ while [ "$PF_RC" -ne 0 ] && [ "$PF_RC" -ne 3 ] && [ "$PASS" -lt "$MAX_PASSES" ];
 done
 
 # ── Outcome ─────────────────────────────────────────────
+# FLOOR — an UNMEASURED run must never wear a ready title (added 2026-08-24).
+# rc=1 means WARN, which means yellow>0; so 0/0/0 counts alongside rc=1 is a
+# CONTRADICTION — it means no count was READABLE, not that nothing was wrong.
+# Both channels have to have failed: the findings JSON absent AND the console
+# scrape matching nothing. That is an instrument failure, and an instrument
+# failure is actionable in a way a 4am DNS drop is not — so this escalates,
+# unlike rc=3.
+#   Live occurrence: 2026-08-24 04:12 logged
+#   "rc=1 (green=0 yellow=0 red=0 src=scrape)" → "READY* — 0 residual (no action)"
+#   having evaluated nothing, because the preflight had aborted at check 3/7.
+#   That specific CAUSE is now closed upstream (the preflight exits 2 on abort,
+#   and PF_DIAG catches its stderr) — but the CLASS is not: verified 2026-08-24
+#   against this exact script with a stub preflight that exits 1, prints no
+#   counts and emits no diagnostic. It still titled READY*, needs_human=false.
+#   Keyed on the SUM, so a genuine warn with counts (e.g. 0 green/4 yellow) is
+#   untouched — negative-controlled, that case still titles READY* correctly.
+PF_UNMEASURED=""
+if [ "$PF_RC" -eq 1 ] && [ "$((PF_GREEN + PF_YELLOW + PF_RED))" -eq 0 ]; then
+  PF_UNMEASURED="preflight returned WARN but reported 0 green / 0 yellow / 0 red (src=${PF_SOURCE:-unknown}) — nothing was measurable"
+  log "  ⚠ FLOOR: $PF_UNMEASURED"
+fi
+
 case "$PF_RC" in
   0) VERDICT="ready" ;;
-  1) VERDICT="warn"  ;;
+  1) if [ -n "$PF_UNMEASURED" ]; then VERDICT="block"; else VERDICT="warn"; fi ;;
   # rc=3 — the preflight found no working network and evaluated NOTHING (added
   # 2026-07-27). This is not a verdict about the stack and must never become a
   # block: on 2026-07-27 a mid-run DNS drop produced red=2/yellow=12 that looked
@@ -291,6 +313,18 @@ if [ -n "${PF_DIAG:-}" ]; then
   NEEDS_HUMAN="true"
 fi
 
+# Same placement logic as PF_DIAG above, and for the same reason: this must sit
+# AFTER the indeterminate reset so it cannot be cleared. An unmeasured run has
+# no findings to escalate BY DEFINITION — the escalation IS "nothing could be
+# read", which is exactly the state a silent needs_human=false would hide.
+if [ -n "${PF_UNMEASURED:-}" ]; then
+  RESIDUAL_ACTIONABLE="$(printf '%s\n%s' "$RESIDUAL_ACTIONABLE" \
+    "$PF_UNMEASURED  →  run the preflight by hand and read its tail: env -u LIMITLESS_STACK_HOME bash tools/limitless-preflight.sh; tail -25" \
+    | grep -v '^[[:space:]]*$' || true)"
+  ACTIONABLE_N=$(printf '%s\n' "$RESIDUAL_ACTIONABLE" | grep -c . || echo 0)
+  NEEDS_HUMAN="true"
+fi
+
 # Dedup corrector list.
 UNIQ_CORR="$(printf '%s\n' "${CORRECTORS_RUN[@]:-}" | sort -u | grep -v '^$' | paste -sd, - 2>/dev/null)"
 
@@ -301,6 +335,12 @@ UNIQ_CORR="$(printf '%s\n' "${CORRECTORS_RUN[@]:-}" | sort -u | grep -v '^$' | p
 # is believed, a false red is eventually investigated.
 if [ "$VERDICT" = "indeterminate" ]; then
   TITLE="nightly self-heal: INDETERMINATE — no network, nothing evaluated (no action)"
+elif [ -n "${PF_UNMEASURED:-}" ]; then
+  # Must outrank every ready branch for the same reason INDETERMINATE does: a run
+  # that measured nothing has no business carrying a ready headline. Distinct
+  # from INDETERMINATE because that one is a known-benign cause (no network) and
+  # deliberately does not wake anyone; this one means the INSTRUMENT failed.
+  TITLE="nightly self-heal: UNMEASURED — preflight said WARN but reported no counts (needs human)"
 elif [ -n "${PF_DIAG:-}" ]; then
   # Must outrank the "ready" branches below. The subshell shape exits 0 with a
   # clean verdict, so without this the headline reads "READY (31 green)" while

@@ -357,10 +357,34 @@ def main():
         print(f"  {tile['label']:14s} {count:3d}")
     print(f"  TOTAL skills: {len(all_skills)}  ·  TOTAL connectors: {len(connectors_dedup)}")
 
+    # COVERAGE FLOOR (added 2026-08-24). A scan that found nothing is not a
+    # snapshot of an empty machine — it is a scan that did not run where the
+    # skills live. Measured the same minute on 2026-08-24: this Mac reports
+    # 123 skills / 25 connectors, while the Cowork sandbox reports 0 / 0. That
+    # zero used to be POSTED and rendered on the Hub's /skills page as data,
+    # which is a false green over an unmeasured set — the same shape as the
+    # nightly reporting READY on 0/0/0 counts.
+    # Refuse to publish; exit 2. The preflight calls this best-effort with
+    # `|| true`, so the exit code cannot affect the Roll Call verdict — what
+    # matters is that report() is not reached.
+    if len(all_skills) == 0:
+        print("  ⚠ FLOOR: scanned 0 skills across "
+              f"{len([p for p in payload['paths_scanned'] if p])} path(s) — "
+              "refusing to publish a zero snapshot.")
+        print("    A zero here means the scan ran somewhere the skills are not "
+              "(e.g. a Cowork sandbox), not that none are installed.")
+        print("    Run it on the Mac that owns ~/.claude/skills.")
+        return 2
+
     title = (f"capabilities — {len(all_skills)} skills · "
              f"{len(connectors_dedup)} connectors across {len(TILES)-1} groups")
     report(payload, title, gh_user)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    # sys.exit(main()) rather than a bare main(): the coverage floor returns 2,
+    # and without this the process would still exit 0 — a floor that cannot be
+    # observed by any caller is not a floor. (The preflight runs this with
+    # `|| true`, so this still cannot affect the Roll Call verdict.)
+    sys.exit(main())
