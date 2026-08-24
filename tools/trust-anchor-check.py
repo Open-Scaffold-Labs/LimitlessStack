@@ -44,8 +44,67 @@ import re
 import sys
 import glob
 
-VAULT = "/Users/matthewlavin/Claude code antigravity/obsidian "  # trailing space is intentional
-HUB   = "/Users/matthewlavin/limitless-stack-hub"
+# Repo roots are DISCOVERED, not hardcoded (2026-08-24).
+#
+# These were absolute Mac paths, which made the whole checker inert anywhere
+# else — and "anywhere else" includes every Cowork session, where these exact
+# two repos are mounted under different paths. Measured: from that environment
+# it skipped 8 of 8 checks and exited 0, while the files it wanted were all
+# present a few directories away. The aggregate floor at the bottom of this
+# file now catches that honestly, but Matt's point stands: a checker whose only
+# possible answer in an environment is "I couldn't check" is not a fixed
+# checker, it is a polite failure. So: find the repos instead of assuming them.
+#
+# VAULT comes from this file's own location (tools/ lives directly under it).
+# The Hub is probed through candidates covering BOTH layouts — on the Mac it is
+# a sibling of the vault's PARENT ("Claude code antigravity/obsidian " sits one
+# level deeper than the home dir); under the sandbox mount both repos are
+# siblings. $HUB_REPO overrides everything, for any layout neither covers.
+VAULT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _find_hub():
+    candidates = [os.environ.get("HUB_REPO")]
+    candidates.append(os.path.join(os.path.dirname(VAULT), "limitless-stack-hub"))
+    candidates.append(os.path.join(os.path.dirname(os.path.dirname(VAULT)),
+                                   "limitless-stack-hub"))
+    candidates.append(os.path.expanduser("~/limitless-stack-hub"))
+    for cand in candidates:
+        if cand and os.path.isfile(os.path.join(cand, "CLAUDE.md")):
+            return cand
+    # Nothing found: return the Mac default so the SKIP text still names the
+    # place a reader should look, rather than an empty string.
+    return os.path.expanduser("~/limitless-stack-hub")
+
+
+HUB = _find_hub()
+
+
+def _home_store_present(raw):
+    """Is the STORE a `~`-relative claim lives in present on THIS machine?
+
+    Gates home-relative path claims. The test is the store root — the first two
+    components after `~` (e.g. `~/.claude/skills`) — not the file itself:
+      * store root present, file missing  -> real drift, report it (unchanged
+        behaviour on Matt's Mac, where ~/.claude/skills holds 123 skills)
+      * store root absent                 -> this machine simply has no such
+        store; nothing about the claim is checkable here, so SKIP
+
+    Needed because the repo roots became discoverable on 2026-08-24, which is
+    the fix that let this checker finally run in the Cowork sandbox — where it
+    promptly reported `~/.claude/skills/roll-call/SKILL.md` as missing. That
+    path is correct on the Mac; the sandbox just has no ~/.claude/skills at all
+    (verified: ABSENT there, EXISTS on the Mac). Reporting it is cry-wolf, which
+    this file is explicitly designed never to do.
+
+    A first attempt gated on "does the vault sit inside $HOME" — that was wrong
+    and measured so: the sandbox's HOME is /sessions/<id> and the vault mounts
+    UNDER it, so the guard evaluated True and never fired.
+    """
+    parts = [p for p in raw.lstrip("~").split("/") if p]
+    if not parts:
+        return True
+    return os.path.isdir(os.path.expanduser(os.path.join("~", *parts[:2])))
 
 VAULT_CLAUDE = os.path.join(VAULT, "CLAUDE.md")
 HUB_CLAUDE   = os.path.join(HUB, "CLAUDE.md")
@@ -148,6 +207,17 @@ def check_paths(claude_path, repo_root, label, prefixes):
             continue
         if not any(raw.startswith(pfx) for pfx in prefixes):
             continue  # not a self-referential path we can authoritatively check
+        # A `~`-relative claim is only checkable on the machine that OWNS that
+        # home directory. Once the repo roots became discoverable (2026-08-24)
+        # this checker started running in the Cowork sandbox, where the vault is
+        # mounted but ~/.claude/skills does not exist — and it immediately
+        # reported `~/.claude/skills/roll-call/SKILL.md` as missing. That path is
+        # correct on Matt's Mac. Reporting it is cry-wolf, which this file is
+        # explicitly designed never to do, so it becomes an honest SKIP instead.
+        if raw.startswith("~") and not _home_store_present(raw):
+            note_skip(f"{label} file-path claims: `{raw}` — that store does not exist "
+                      f"on this machine, so the claim is not checkable here")
+            continue
         p = os.path.expanduser(raw) if raw[0] in "~/" else os.path.join(repo_root, raw)
         if not os.path.exists(p):
             add(f"{label} CLAUDE.md references `{raw}` but that file does not exist on disk",
