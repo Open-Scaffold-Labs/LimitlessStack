@@ -772,10 +772,17 @@ echo ""
 # The CLAUDE.md files are the stack's trust anchors — every session reads them
 # as ground truth, so silent doc/reality drift propagates as confidently-stated
 # wrong facts (the #12/#14/#33 class). tools/trust-anchor-check.py mechanizes
-# the checkable part of the end-of-session "refresh the trust anchors" step:
-# Hub migration table vs migrations/ files, self-referential backtick file-path
-# claims, and notebook IDs vs the routing config. Conservative by design (only
-# unambiguous drift) so it never cries wolf. Drift here is HUMAN-GATED — the
+# the checkable part of the end-of-session "refresh the trust anchors" step.
+# SEVEN dimensions as of 2026-08-23 (was three): Hub migration table vs
+# migrations/ files; the SAME parity check against README.md (a green on
+# CLAUDE.md said nothing about the doc a new reader opens first); self-
+# referential backtick file-path claims; notebook IDs vs the routing config;
+# phantom routes (a sidebar LABEL cited as a path, derived from nav-config so
+# the next divergence needs no code change); prose counts (N migrations / N
+# routes vs the count on disk); and canonical facts (a registered fact restated
+# without linking to its owner page). Conservative by design (only unambiguous
+# drift) so it never cries wolf — two broader variants were prototyped and
+# REJECTED on measured false positives; see the comments in the checker. Drift here is HUMAN-GATED — the
 # nightly (Loop 5) surfaces/escalates it but never auto-edits a trust anchor.
 # Added 2026-07-23 with Loop 6.
 echo "[meta] Trust-anchor reality (Loop 6)"
