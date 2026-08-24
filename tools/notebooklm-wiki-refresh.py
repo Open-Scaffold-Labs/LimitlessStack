@@ -1630,6 +1630,15 @@ def main():
         n = 0
         for path in sorted(VAULT.glob("wiki/**/*.md")):
             rel = str(path.relative_to(VAULT))
+            # MUST honour EXCLUDE_FROM_NOTEBOOKS. The first version of this
+            # flag did not, and reported 95 "routed" pages against 48 present —
+            # so the preflight announced "47 missing" when the true figure was
+            # ONE. Those 47 were the deliberate exclusions (source-summary
+            # pages that duplicate material already covered), which is why the
+            # two numbers matched exactly. Counting a deliberate design as a
+            # defect, in a metric built to stop exactly that. 2026-08-24.
+            if is_excluded(rel):
+                continue
             dest = DEFAULT_ROUTE[2]
             for r in NOTEBOOK_ROUTES:
                 if rel.startswith(r[0]):

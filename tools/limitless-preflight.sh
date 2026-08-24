@@ -1486,10 +1486,14 @@ except Exception:
         # NotebookLM query against it was searching half the wiki and saying so
         # nowhere. A number that sounds fine while hiding the real one is the
         # same failure as an abort exiting 1 (claude-anti-patterns #72).
+        # ELIGIBLE = routed MINUS the deliberate EXCLUDE_FROM_NOTEBOOKS list.
+        # Excluding those is a design decision with a written rationale, not a
+        # gap — counting them as "missing" turned a healthy bucket into a false
+        # alarm on 2026-08-24 (reported 47 missing; the true number was 1).
         cap_routed=$(python3.11 "$VAULT/tools/notebooklm-wiki-refresh.py" --count-routed "$cap_label" 2>/dev/null || echo "")
         if [ -n "$cap_routed" ] && [ "$cap_routed" -gt "$cap_count" ] 2>/dev/null; then
-          warn "notebook '$cap_label' ($cap_id) at $cap_count/$cap_cap sources — and only $cap_count of $cap_routed routed pages are IN it ($((cap_routed - cap_count)) missing)" \
-               "queries against this bucket see a FRACTION of the wiki. Raise the plan's source cap, split the bucket, or route fewer pages — then re-run the refresh"
+          warn "notebook '$cap_label' ($cap_id) at $cap_count/$cap_cap sources — $((cap_routed - cap_count)) eligible page(s) not yet in it ($cap_count of $cap_routed)" \
+               "run the refresh for this bucket; if the add fails, the cap is the blocker — raise the plan, split the bucket, or exclude more paths"
         else
           warn "notebook '$cap_label' ($cap_id) at $cap_count/$cap_cap sources — adds fail at the cap" \
                "consolidate or exclude sources (see the handoffs-rollup pattern, the-match 2026-07-06)"
