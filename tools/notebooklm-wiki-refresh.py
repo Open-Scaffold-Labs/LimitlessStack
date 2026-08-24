@@ -86,9 +86,19 @@ IGNORED_NOTEBOOKS = {
 PROJECT_LABELS = list(dict.fromkeys(r[2] for r in NOTEBOOK_ROUTES))
 
 # ── Exclusion list ────────────────────────────────────────────────────────
-# Files matching any of these prefixes are NOT mirrored to ANY notebook —
-# not a per-project notebook, not the default cdaa7a43 bucket, not the
-# reminder. These are wiki summary pages whose underlying source material
+# Files matching any of these prefixes are not mirrored to any ROUTED notebook —
+# not a per-project notebook and not the default cdaa7a43 bucket.
+#
+# ⚠ CORRECTED 2026-08-24: this comment used to say "not the reminder" as well.
+# That was never true. is_excluded() is consulted ONLY by route_files(); the
+# curated REMINDER_FILES allowlist is iterated separately and never calls it.
+# A reminder-allowlisted page therefore stays in ab4b7ccb even if it appears
+# here. Do NOT "fix" the code to match the old comment — the reminder bucket is
+# what the next session reads first, and emptying it would be silent. To drop a
+# page from the general bucket while keeping it in the reminder, use
+# EXCLUDE_FROM_DEFAULT_BUCKET below, which states that intent explicitly.
+#
+# These are wiki summary pages whose underlying source material
 # is already represented in a per-project notebook via the raw repo files
 # (e.g., wiki/sources/firehazmat-claude-md-2026-04-14.md summarises the
 # FireHazmat repo's CLAUDE.md, which is already a source in f376f6e8).
@@ -125,6 +135,17 @@ EXCLUDE_FROM_NOTEBOOKS = [
     "wiki/synthesis/session-handoff-2026-06-14.md",
     "wiki/synthesis/session-handoff-2026-06-15.md",
 ]
+
+# ── Excluded from the DEFAULT bucket only (added 2026-08-24) ─────────────────
+# Weaker than EXCLUDE_FROM_NOTEBOOKS: a page listed here is dropped from the
+# general cdaa7a43 bucket but keeps every OTHER home it has — in practice, the
+# curated ab4b7ccb reminder allowlist, which CLAUDE.md tells each session to
+# query first. A page that is complete in the reminder does not need a second
+# slot in the general bucket.
+# ⚠ Per-project routes are unaffected: this is applied at the default fallback
+# only, so a page that matches a NOTEBOOK_ROUTES prefix never reaches it.
+# Overridable per project via the manifest's NOTEBOOKLM["exclude_from_default"].
+EXCLUDE_FROM_DEFAULT_BUCKET: list[str] = []
 
 
 def is_excluded(rel_path: str) -> bool:
@@ -209,6 +230,8 @@ if "ignored" in _NB_MANIFEST:
     IGNORED_NOTEBOOKS = _NB_MANIFEST["ignored"]
 if "exclude_paths" in _NB_MANIFEST:
     EXCLUDE_FROM_NOTEBOOKS = _NB_MANIFEST["exclude_paths"]
+if "exclude_from_default" in _NB_MANIFEST:
+    EXCLUDE_FROM_DEFAULT_BUCKET = _NB_MANIFEST["exclude_from_default"]
 _REMINDER = _NB_MANIFEST.get("reminder", {})
 if "notebook_id" in _REMINDER:
     REMINDER_NOTEBOOK_ID = _REMINDER["notebook_id"]
@@ -968,6 +991,10 @@ def plan_routing() -> dict[str, list[Path]]:
                 matched = True
                 break
         if not matched:
+            # Default-bucket-only exclusion. Applied HERE, after every route has
+            # had its chance, so it can never affect a per-project notebook.
+            if any(rel.startswith(p) for p in EXCLUDE_FROM_DEFAULT_BUCKET):
+                continue
             buckets[default_label].append(path)
     return buckets
 
@@ -1644,6 +1671,11 @@ def main():
                 if rel.startswith(r[0]):
                     dest = r[2]
                     break
+            # Same default-bucket-only exclusion route_files() applies, or the
+            # preflight's "eligible" count would exceed what the sync uploads.
+            if dest == DEFAULT_ROUTE[2] and any(
+                    rel.startswith(p) for p in EXCLUDE_FROM_DEFAULT_BUCKET):
+                continue
             if dest == args.count_routed:
                 n += 1
         print(n)
