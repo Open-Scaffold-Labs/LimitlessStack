@@ -1480,8 +1480,20 @@ except Exception:
     elif [ "$CAPS_EXIT" -eq 1 ]; then
       while IFS=$'\t' read -r cap_id cap_label cap_count cap_cap; do
         [ -z "$cap_id" ] && continue
-        warn "notebook '$cap_label' ($cap_id) at $cap_count/$cap_cap sources — adds fail at the cap" \
-             "consolidate or exclude sources (see the handoffs-rollup pattern, the-match 2026-07-06)"
+        # Report COVERAGE, not just the cap. "48/50 sources" reads as a tidy
+        # housekeeping note; what it actually meant on 2026-08-24 was that 47
+        # of the 95 pages routed to this bucket had NEVER made it in, so every
+        # NotebookLM query against it was searching half the wiki and saying so
+        # nowhere. A number that sounds fine while hiding the real one is the
+        # same failure as an abort exiting 1 (claude-anti-patterns #72).
+        cap_routed=$(python3.11 "$VAULT/tools/notebooklm-wiki-refresh.py" --count-routed "$cap_label" 2>/dev/null || echo "")
+        if [ -n "$cap_routed" ] && [ "$cap_routed" -gt "$cap_count" ] 2>/dev/null; then
+          warn "notebook '$cap_label' ($cap_id) at $cap_count/$cap_cap sources — and only $cap_count of $cap_routed routed pages are IN it ($((cap_routed - cap_count)) missing)" \
+               "queries against this bucket see a FRACTION of the wiki. Raise the plan's source cap, split the bucket, or route fewer pages — then re-run the refresh"
+        else
+          warn "notebook '$cap_label' ($cap_id) at $cap_count/$cap_cap sources — adds fail at the cap" \
+               "consolidate or exclude sources (see the handoffs-rollup pattern, the-match 2026-07-06)"
+        fi
       done <<< "$CAPS_OUT"
     else
       warn "notebook capacity check failed (exit=$CAPS_EXIT)" "$CAPS_OUT"

@@ -1592,6 +1592,14 @@ def main():
                              "50-source cap. Print one 'ID<TAB>label<TAB>count<TAB>cap' "
                              "line per near-full notebook. Exit 0 clean, 1 if warnings, "
                              "2 on tool failure. Used by tools/limitless-preflight.sh.")
+    parser.add_argument("--count-routed", metavar="LABEL",
+                        help="print how many wiki pages ROUTE to LABEL's bucket and exit. "
+                             "Pairs with --check-caps so the preflight can report COVERAGE "
+                             "(how many routed pages are actually in the notebook) rather "
+                             "than only the cap. Added 2026-08-24, when 'wiki 48/50' turned "
+                             "out to mean 47 of 95 routed pages had never made it in and "
+                             "every query against that bucket was silently seeing half the "
+                             "wiki. Offline: reads the filesystem, never the API.")
     parser.add_argument("--check-coverage", action="store_true",
                         help="compare NotebookLM's notebooks against routing + IGNORED_NOTEBOOKS. "
                              "Print orphans (one per line, ID<TAB>title) and exit. "
@@ -1614,6 +1622,23 @@ def main():
                              "'all-projects' = every per-project route, skip wiki default and reminder; "
                              "<project> = just that notebook; 'reminder' = ab4b7ccb only. Default: all.")
     args = parser.parse_args()
+
+    # --count-routed is filesystem-only and must run BEFORE the auth check:
+    # it never touches the API, and gating it on auth made the preflight's
+    # coverage line hang on `notebooklm auth check` (observed 2026-08-24).
+    if args.count_routed:
+        n = 0
+        for path in sorted(VAULT.glob("wiki/**/*.md")):
+            rel = str(path.relative_to(VAULT))
+            dest = DEFAULT_ROUTE[2]
+            for r in NOTEBOOK_ROUTES:
+                if rel.startswith(r[0]):
+                    dest = r[2]
+                    break
+            if dest == args.count_routed:
+                n += 1
+        print(n)
+        sys.exit(0)
 
     if not args.skip_auth_check:
         if not check_auth():
