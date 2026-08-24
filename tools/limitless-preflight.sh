@@ -19,6 +19,49 @@ set -u
 VAULT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$VAULT" || { echo "ERROR: cannot cd to vault $VAULT"; exit 2; }
 
+# ── Canonical LimitlessStack root ───────────────────────
+# MUST be defaulted HERE, above every consumer. Under `set -u` a reference
+# before this line aborts the ENTIRE preflight: the sibling-repo git check
+# shipped 2026-08-23 (08a2275) read it 172 lines early and killed checks 4-7
+# in any shell where the variable was not already exported — which is every
+# shell on this Mac (not in .zshenv/.zshrc/.zprofile/.zlogin, not in
+# `launchctl getenv`, not exported by nightly-selfheal.sh).
+LIMITLESS_STACK_HOME="${LIMITLESS_STACK_HOME:-/Users/matthewlavin/LimitlessStack}"
+
+# ── Completion assertion ────────────────────────────────
+# A preflight that dies mid-run must NOT wear the exit code that means
+# "proceed". `set -u` aborts with status 1, which this file's own header
+# documents as WARN — so a DEAD gate is indistinguishable from a mildly
+# drifted one, and nightly-selfheal.sh renders it as
+# "READY* — 0 known-accepted residual (no action)" having evaluated nothing.
+#
+# Second occurrence of this class in this file: dd10778 (2026-05-18) hit
+# ${WARNINGS[*]} inside $( ) — subshell-only, so it was labelled "cosmetic",
+# patched at two literal call sites, and the class left open.
+#
+# The flag flips true at each LEGITIMATE terminal state. There are exactly
+# three below this line (verified by an exhaustive grep of `exit <n>`):
+# --help, network_abort's INDETERMINATE exit 3, and the final verdict chain.
+# Anything else reaching EXIT is an abort.
+#
+# Do NOT add $LINENO to the banner: inside an EXIT trap it does not report the
+# failing line (measured on bash 3.2.57 — said 12 where stderr said 10).
+# $BASH_COMMAND DOES survive into the trap (measured), so it names the command.
+# Fenced by tools/test-preflight-abort.sh — mutation-proven, with a negative
+# control that fails if this trap is removed.
+PREFLIGHT_COMPLETED=false
+trap '_rc=$?
+      if [ "$PREFLIGHT_COMPLETED" != true ]; then
+        echo ""
+        echo "═══════════════════════════════════════════════════════"
+        echo "  ⨯ VERDICT: ABORTED — died before reaching a verdict (rc=$_rc)"
+        echo "  Failing command: ${BASH_COMMAND:-<unknown>}"
+        echo "  NOTHING WAS EVALUATED — this is NOT a verdict about the stack."
+        echo "  Do not proceed on this run. The failing line is on stderr above."
+        echo "═══════════════════════════════════════════════════════"
+        exit 2
+      fi' EXIT
+
 # ── Project manifest ────────────────────────────────────
 # If $VAULT/.limitless-project.py exists, read its CHECKS list to determine
 # which preflight sections run. Lets each project (Hub, the-match, future
@@ -128,6 +171,7 @@ while [ "$#" -gt 0 ]; do
       echo "  --findings-out=PATH  write machine-readable findings JSON (for the nightly)."
       echo "  POST to the Hub happens automatically if Keychain has"
       echo "  lsh-stack-health-token (shared secret)."
+      PREFLIGHT_COMPLETED=true          # legitimate terminal state (see trap)
       exit 0 ;;
     *) echo "unknown arg: $1" >&2 ;;
   esac
@@ -307,6 +351,11 @@ network_abort() {
     printf '{"verdict":"indeterminate","reason":"network","net_state":"%s","phase":"%s","detail":"%s","green":0,"yellow":0,"red":0,"warnings":[],"blockers":[],"generated_at":"%s"}\n' \
       "$NET_STATE" "$phase" "$NET_DETAIL" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$FINDINGS_OUT"
   fi
+  # Legitimate terminal state: INDETERMINATE is a documented contract (rc=3,
+  # added 2026-07-27) and must NEVER be converted into a BLOCK by the trap —
+  # that would resurrect the 2026-07-27 incident where a mid-run DNS drop
+  # produced red=2/yellow=12 that looked like fourteen problems and was one.
+  PREFLIGHT_COMPLETED=true
   exit 3
 }
 
@@ -387,7 +436,12 @@ for _sib in "/Users/matthewlavin/limitless-stack-hub:Hub" \
             "$LIMITLESS_STACK_HOME:LimitlessStack"; do
   _sib_path="${_sib%%:*}"; _sib_name="${_sib##*:}"
   if [ -d "$_sib_path/.git" ]; then
-    _dirty=$(git -C "$_sib_path" status --porcelain 2>/dev/null | grep -vc '^??' || echo 0)
+    # `grep -c` PRINTS 0 and EXITS 1 when it matches nothing, so the original
+    # `|| echo 0` appended a SECOND line: _dirty became "0\n0", every [ -eq ]
+    # below died with "integer expression expected", and a CLEAN sibling repo
+    # therefore printed neither ok nor warn — the check was fail-silent in
+    # exactly the case it was written to confirm. `|| true` keeps grep's own 0.
+    _dirty=$(git -C "$_sib_path" status --porcelain 2>/dev/null | grep -vc '^??' || true)
     _ahead=$(git -C "$_sib_path" log origin/main..HEAD --oneline 2>/dev/null | wc -l | tr -d ' ')
     if [ "${_dirty:-0}" -eq 0 ] && [ "${_ahead:-0}" -eq 0 ]; then
       ok "$_sib_name repo clean and pushed"
@@ -429,7 +483,7 @@ if [ -r "$VAULT/wiki/index.md" ]; then
   if [ ${#MISSING_FROM_INDEX[@]} -eq 0 ]; then
     ok "index.md catalog complete (every wiki/*.md is listed)"
   else
-    warn "${#MISSING_FROM_INDEX[@]} wiki page(s) not listed in wiki/index.md: ${MISSING_FROM_INDEX[*]}" "edit wiki/index.md to add them, or document why they're excluded"
+    warn "${#MISSING_FROM_INDEX[@]} wiki page(s) not listed in wiki/index.md: ${MISSING_FROM_INDEX[*]}" "edit wiki/index.md to add them, or document why they're excluded"   # unbound-ok: else-branch of ${#MISSING_FROM_INDEX[@]} -eq 0
   fi
 
   # Check 2: template-placeholder detection — frontmatter dates literally set
@@ -444,7 +498,7 @@ if [ -r "$VAULT/wiki/index.md" ]; then
   if [ ${#PLACEHOLDERS[@]} -eq 0 ]; then
     ok "no template-placeholder dates left in wiki"
   else
-    warn "${#PLACEHOLDERS[@]} wiki page(s) still have YYYY-MM-DD placeholder frontmatter: ${PLACEHOLDERS[*]}" "fill in the page content + real dates, or delete the page"
+    warn "${#PLACEHOLDERS[@]} wiki page(s) still have YYYY-MM-DD placeholder frontmatter: ${PLACEHOLDERS[*]}" "fill in the page content + real dates, or delete the page"   # unbound-ok: else-branch of ${#PLACEHOLDERS[@]} -eq 0
   fi
 
   # Check 3: overdue TODO detection — two passes:
@@ -506,7 +560,7 @@ if [ -r "$VAULT/wiki/index.md" ]; then
   elif [ ${#OVERDUE[@]} -eq 0 ]; then
     ok "no overdue items in $SCANNED task/TODO file(s)"
   else
-    warn "${#OVERDUE[@]} overdue item(s) across $SCANNED task file(s): ${OVERDUE[*]}" "address the items, then update the task file"
+    warn "${#OVERDUE[@]} overdue item(s) across $SCANNED task file(s): ${OVERDUE[*]}" "address the items, then update the task file"   # unbound-ok: else-branch of ${#OVERDUE[@]} -eq 0
   fi
 fi
 echo ""
@@ -556,7 +610,8 @@ canonical_drift_warn() {
 }
 
 echo "[meta] Limitless Stack canonical sync"
-LIMITLESS_STACK_HOME="${LIMITLESS_STACK_HOME:-/Users/matthewlavin/LimitlessStack}"
+# ($LIMITLESS_STACK_HOME is defaulted once, at the top of this file — one
+#  evaluator, no second default to drift out of step.)
 if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
   tools_clean=true
   # Dynamic: iterate over every file in canonical tools/. Adding a new tool
@@ -721,6 +776,26 @@ echo ""
 # silently-broken nightly (Mac asleep for days, launchd unloaded, or a residual
 # finding no corrector can fix) shows up at the NEXT session start instead of
 # rotting unnoticed. Added 2026-07-23 with Loop 5.
+echo "[meta] Shell safety (set -u static check)"
+# Added 2026-08-24 (claude-anti-patterns #72). The pre-commit gate stops this
+# class entering the repo and the nightly catches it at runtime — but a runtime
+# check only ever sees the ONE BRANCH that executed. A bug sitting in a branch
+# today's run does not take is invisible to every other layer and visible to
+# this one, because static analysis reads all of them. That is why this exists
+# in addition to, not instead of, the gate.
+if [ -f "$VAULT/tools/shell-unbound-check.py" ]; then
+  if shell_out="$(python3.11 "$VAULT/tools/shell-unbound-check.py" 2>&1)"; then
+    ok "no unbound-variable risks in tools/*.sh ($(printf '%s' "$shell_out" | grep -c '✓') file(s) scanned)"
+  else
+    warn "unbound-variable risk in tools/*.sh — $(printf '%s\n' "$shell_out" | grep -cE '^      line ') site(s)" \
+         "python3.11 tools/shell-unbound-check.py  ·  guard it, or mark the line '# unbound-ok: <why>'"
+  fi
+else
+  warn "tools/shell-unbound-check.py missing — the set -u class is unguarded at author time" \
+       "cp \"$LIMITLESS_STACK_HOME/tools/shell-unbound-check.py\" \"$VAULT/tools/\""
+fi
+echo ""
+
 echo "[meta] Nightly self-heal (Loop 5)"
 NSH_LABEL="com.openscaffold.nightly-selfheal"
 NSH_PLIST="$HOME/Library/LaunchAgents/$NSH_LABEL.plist"
@@ -854,7 +929,7 @@ if [ -r "$VAULT/tools/anti-pattern-candidates.py" ]; then
     ok "$AP_OUT"
   elif [ "$AP_EXIT" -eq 1 ]; then
     warn "$AP_OUT" \
-         "run the rec #5 inspector this session (gather + independent inspector subagent), stage proposals for Matt, then bump claude-anti-patterns.md updated:"
+         "run the rec #5 inspector this session (gather + independent inspector subagent), stage proposals for Matt, then bump claude-anti-patterns.md anti_patterns_reviewed: (NOT updated: — that field is the page-edit date and bumping it used to silence this gate)"
   else
     skip "anti-pattern review check errored — $AP_OUT"
   fi
@@ -1576,7 +1651,7 @@ verdict = "ready"
 if any(t["status"] == "danger" for t in tools): verdict = "block"
 elif any(t["status"] == "warn" for t in tools): verdict = "warn"
 print(json.dumps({"verdict": verdict, "tools": tools, "reported_by": reported_by}))
-' "${TOOL_STATES[@]}" "$(whoami)@$(hostname -s 2>/dev/null || echo unknown)")
+' "${TOOL_STATES[@]}" "$(whoami)@$(hostname -s 2>/dev/null || echo unknown)")   # unbound-ok: enclosed by [ ${#TOOL_STATES[@]} -gt 0 ] at 1625
 
   if [ -n "$JSON_OUT" ]; then
     mkdir -p "$(dirname "$JSON_OUT")"
@@ -1743,15 +1818,19 @@ else
 fi
 echo ""
 
+# Legitimate terminal state: everything below produces a REAL verdict, so flip
+# the flag ONCE here rather than in each of the three branches.
+PREFLIGHT_COMPLETED=true
+
 if [ "$RED" -gt 0 ]; then
   echo "  ✗ VERDICT: BLOCK — do NOT start work"
   echo ""
   echo "  Blockers (fix first):"
-  for b in "${BLOCKERS[@]}"; do echo "    - $b"; done
+  for b in "${BLOCKERS[@]}"; do echo "    - $b"; done   # unbound-ok: RED>0 branch, and bad() appends to BLOCKERS
   if [ "$YELLOW" -gt 0 ]; then
     echo ""
     echo "  Warnings:"
-    for w in "${WARNINGS[@]}"; do echo "    - $w"; done
+    for w in "${WARNINGS[@]}"; do echo "    - $w"; done   # unbound-ok: YELLOW>0 branch, and warn() appends to WARNINGS
   fi
   echo ""
   echo "  Before resuming work: fix blockers above, follow the USAGE REMINDERS."
@@ -1761,11 +1840,11 @@ elif [ "$YELLOW" -gt 0 ]; then
   echo "  ⚠ VERDICT: WARN — $YELLOW drift finding(s)"
   echo ""
   echo "  Warnings (report to Matt, may proceed with acknowledgement):"
-  for w in "${WARNINGS[@]}"; do echo "    - $w"; done
+  for w in "${WARNINGS[@]}"; do echo "    - $w"; done   # unbound-ok: YELLOW>0 branch, and warn() appends to WARNINGS
   if [ "$ACCEPTED" -gt 0 ]; then
     echo ""
     echo "  Known-accepted state ($ACCEPTED — listed separately so it never pads the count above):"
-    for a in "${ACCEPTED_NOTES[@]}"; do echo "    ℹ $a"; done
+    for a in "${ACCEPTED_NOTES[@]}"; do echo "    ℹ $a"; done   # unbound-ok: ACCEPTED>0 branch, accepted() appends to ACCEPTED_NOTES
   fi
   echo ""
   echo "  Proceed with the USAGE REMINDERS above as your routing contract."
@@ -1781,7 +1860,7 @@ else
   if [ "$ACCEPTED" -gt 0 ]; then
     echo ""
     echo "  Known-accepted state ($ACCEPTED — real, but not this session's to clear):"
-    for a in "${ACCEPTED_NOTES[@]}"; do echo "    ℹ $a"; done
+    for a in "${ACCEPTED_NOTES[@]}"; do echo "    ℹ $a"; done   # unbound-ok: ACCEPTED>0 branch, accepted() appends to ACCEPTED_NOTES
   fi
   echo "  Follow the USAGE REMINDERS above for every tool interaction this session."
   echo "═══════════════════════════════════════════════════════"

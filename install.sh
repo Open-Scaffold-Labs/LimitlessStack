@@ -98,13 +98,35 @@ cp "$SCRIPT_DIR/tools/limitless-preflight.sh" "$TARGET/tools/limitless-preflight
 cp "$SCRIPT_DIR/tools/nightly-selfheal.sh"        "$TARGET/tools/nightly-selfheal.sh"
 cp "$SCRIPT_DIR/tools/trust-anchor-check.py"      "$TARGET/tools/trust-anchor-check.py"
 cp "$SCRIPT_DIR/tools/anti-pattern-candidates.py" "$TARGET/tools/anti-pattern-candidates.py"
+# Shell-safety layer (added 2026-08-24, claude-anti-patterns #72). The `set -u`
+# unbound-variable class hit tools/limitless-preflight.sh TWICE, three months
+# apart, and the second time the abort exited with the code that means
+# "proceed". These three are the PREVENTION half: a static checker, the
+# pre-commit gate that runs it, and the behavioural fence for the preflight's
+# completion assertion. Shipped to every project so new vaults inherit the
+# lesson rather than rediscovering it.
+cp "$SCRIPT_DIR/tools/shell-unbound-check.py"    "$TARGET/tools/shell-unbound-check.py"
+cp "$SCRIPT_DIR/tools/git-pre-commit.sh"         "$TARGET/tools/git-pre-commit.sh"
+cp "$SCRIPT_DIR/tools/install-git-hooks.sh"      "$TARGET/tools/install-git-hooks.sh"
+cp "$SCRIPT_DIR/tools/test-preflight-abort.sh"   "$TARGET/tools/test-preflight-abort.sh"
 # The nightly-selfheal launchd plist TEMPLATE (rendered + wired in step 9).
 cp "$SCRIPT_DIR/tools/com.openscaffold.nightly-selfheal.plist.template" \
    "$TARGET/tools/com.openscaffold.nightly-selfheal.plist.template"
 chmod +x "$TARGET/tools/session-bootstrap.sh" "$TARGET/tools/limitless-preflight.sh" \
          "$TARGET/tools/notebooklm-wiki-refresh.py" "$TARGET/tools/notebooklm-dedupe.py" \
          "$TARGET/tools/nightly-selfheal.sh" "$TARGET/tools/trust-anchor-check.py" \
-         "$TARGET/tools/anti-pattern-candidates.py"
+         "$TARGET/tools/anti-pattern-candidates.py" "$TARGET/tools/shell-unbound-check.py" \
+         "$TARGET/tools/git-pre-commit.sh" "$TARGET/tools/install-git-hooks.sh" \
+         "$TARGET/tools/test-preflight-abort.sh"
+# .git/hooks is NOT version-controlled, so the gate must be installed per clone.
+# Do it here rather than leaving it to whoever remembers — that is the whole
+# point of the class this guards.
+if [ -d "$TARGET/.git" ]; then
+  bash "$TARGET/tools/install-git-hooks.sh" "$TARGET" 2>/dev/null | sed 's/^/  /' || \
+    echo "  ⚠ pre-commit gate not installed — run: bash tools/install-git-hooks.sh"
+else
+  echo "  ℹ $TARGET is not a git repo yet — after 'git init', run: bash tools/install-git-hooks.sh"
+fi
 echo "  ✓ pinecone-sync, pinecone-search, notebooklm-wiki-refresh, notebooklm-dedupe,"
 echo "    session-bootstrap, limitless-preflight (the script Roll Call calls),"
 echo "    nightly-selfheal (Loop 5), trust-anchor-check (Loop 6), anti-pattern-candidates (rec #5)"

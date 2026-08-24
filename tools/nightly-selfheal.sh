@@ -128,6 +128,19 @@ PY
     PF_SOURCE="scrape"
   fi
   PF_GREEN="${PF_GREEN:-0}"; PF_YELLOW="${PF_YELLOW:-0}"; PF_RED="${PF_RED:-0}"
+
+  # ── Shell-diagnostic detection (2026-08-24) ───────────
+  # The SUBSHELL shape of the `set -u` class — dd10778, 2026-05-18 — dies inside
+  # $( ), so the parent completes normally and EXITS 0. The preflight's own
+  # completion assertion cannot see it (the flag legitimately flips true), and
+  # tools/shell-unbound-check.py only guards what gets COMMITTED. The one
+  # remaining tell is the diagnostic bash writes to stderr, which this function
+  # already captures via 2>&1. So detect it here — the only fully-automatic
+  # catcher of that shape, with no human in the loop.
+  # NOT a second evaluator of "did it run": the completion flag answers that.
+  # This answers a different question — "did the shell report an error at all".
+  PF_DIAG="$(printf '%s\n' "$out" \
+    | grep -oE '[A-Za-z0-9_.-]+\.sh: line [0-9]+: .*' | head -1 || true)"
   rm -f "$fjson"
 }
 
@@ -264,6 +277,20 @@ if [ "$VERDICT" = "block" ] || [ -n "$RESIDUAL_ACTIONABLE" ]; then NEEDS_HUMAN="
 # dropped at 4am is the cry-wolf failure this whole guard exists to remove.
 if [ "$VERDICT" = "indeterminate" ]; then NEEDS_HUMAN="false"; RESIDUAL_ACTIONABLE=""; ACTIONABLE_N=0; fi
 
+# A shell diagnostic escalates REGARDLESS of exit code, and deliberately sits
+# AFTER the indeterminate reset. Reason: the block above only computes
+# RESIDUAL_ACTIONABLE when rc != 0, but the subshell shape this catches exits
+# ZERO — dd10778 exited 0 for two weeks while printing the error every run. A
+# diagnostic is never normal, so unlike a 4am DNS drop it is always worth a
+# human. Added 2026-08-24 (claude-anti-patterns #72).
+if [ -n "${PF_DIAG:-}" ]; then
+  RESIDUAL_ACTIONABLE="$(printf '%s\n%s' "$RESIDUAL_ACTIONABLE" \
+    "preflight emitted a shell diagnostic — $PF_DIAG  →  python3.11 tools/shell-unbound-check.py && bash tools/test-preflight-abort.sh --full" \
+    | grep -v '^[[:space:]]*$' || true)"
+  ACTIONABLE_N=$(printf '%s\n' "$RESIDUAL_ACTIONABLE" | grep -c . || echo 0)
+  NEEDS_HUMAN="true"
+fi
+
 # Dedup corrector list.
 UNIQ_CORR="$(printf '%s\n' "${CORRECTORS_RUN[@]:-}" | sort -u | grep -v '^$' | paste -sd, - 2>/dev/null)"
 
@@ -274,6 +301,12 @@ UNIQ_CORR="$(printf '%s\n' "${CORRECTORS_RUN[@]:-}" | sort -u | grep -v '^$' | p
 # is believed, a false red is eventually investigated.
 if [ "$VERDICT" = "indeterminate" ]; then
   TITLE="nightly self-heal: INDETERMINATE — no network, nothing evaluated (no action)"
+elif [ -n "${PF_DIAG:-}" ]; then
+  # Must outrank the "ready" branches below. The subshell shape exits 0 with a
+  # clean verdict, so without this the headline reads "READY (31 green)" while
+  # needs_human is quietly true — a false green with an alarm nobody sees.
+  # Verified against a fake preflight reproducing exactly that shape.
+  TITLE="nightly self-heal: SHELL DIAGNOSTIC — $PF_DIAG (needs human)"
 elif [ "$VERDICT" = "ready" ] && [ "$HEALED" = "true" ]; then
   TITLE="nightly self-heal: HEALED → READY (${UNIQ_CORR:-none})"
 elif [ "$VERDICT" = "ready" ]; then

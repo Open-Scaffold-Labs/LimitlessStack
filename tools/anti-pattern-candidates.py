@@ -131,7 +131,18 @@ def review_due():
     rec #5 loop: it tells a session 'you've logged mistakes since the last
     anti-pattern review — run the inspector'."""
     ap = _read(AP)
-    m = re.search(r"^updated:\s*(\d{4}-\d{2}-\d{2})", ap, re.M)
+    # PREFER a dedicated marker over the general-purpose `updated:` field.
+    # `updated:` has two consumers: the page convention (bump it whenever you
+    # edit the page) and this gate (bump it when you REVIEW). On 2026-08-24 a
+    # session added ONE entry, bumped `updated:` per the page convention, and
+    # silently cleared a standing "review due" warning that had 23 unreviewed
+    # log entries behind it — a safety gate switched off by following an
+    # unrelated convention correctly. One evaluator per fact
+    # (claude-anti-patterns #46): `anti_patterns_reviewed:` means "the rec #5
+    # ritual ran on this date" and nothing else. Falls back to `updated:` so
+    # a page without the key behaves exactly as before.
+    m = re.search(r"^anti_patterns_reviewed:\s*(\d{4}-\d{2}-\d{2})", ap, re.M) \
+        or re.search(r"^updated:\s*(\d{4}-\d{2}-\d{2})", ap, re.M)
     reviewed = m.group(1) if m else "0000-00-00"
     dates = re.findall(r"^## \[(\d{4}-\d{2}-\d{2})\]\s+(\w+)\s*\|", _read(LOG), re.M)
     mistake_dates = [d for d, op in dates if op in MISTAKE_OPS]

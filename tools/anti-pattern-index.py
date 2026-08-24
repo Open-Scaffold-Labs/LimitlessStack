@@ -93,6 +93,11 @@ TRIPWIRES = [
     ('a test total, a node count or a coverage number that DROPPED',
      ["29", "65"],
      "A shrinking total is a finding. Reconcile the arithmetic: previous + new = current, exactly."),
+    ('adding a check to a checker, a linter, a preflight or a CI gate',
+     ["72", "29", "38", "67"],
+     "Run it from a CLEAN shell (env -u <VAR>, no profile) before committing — the shell you "
+     "authored in is not the shell it ships into. And make sure its abort cannot exit with a "
+     "verdict code. Fence: bash tools/test-preflight-abort.sh"),
     ('a probe you have now run THREE times that keeps returning the same thing',
      ["29", "40", "25"],
      "An unchanging reading is a claim about the INSTRUMENT until proven otherwise. Stop polling; check the probe (`ps -o etime=`, log mtime). Never poll liveness by `pgrep -f <name>` — it matches your own poll."),
@@ -129,7 +134,9 @@ SITUATIONS = [
     ("run a market or competitive pass",
      ["47", "51", "31"]),
     ("write a spec, phase plan or gameplan",
-     ["47", "63", "31", "26"]),
+     ["47", "63", "31", "26", "73"]),
+    ("decide HOW MUCH to build — scope, polish, or reopen a settled design decision",
+     ["73", "23a", "26", "47"]),
     ("ask Matt a question",
      ["21", "55", "53", "32", "57"]),
     ("take a destructive or irreversible action",
