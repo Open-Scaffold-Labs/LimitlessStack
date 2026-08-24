@@ -175,11 +175,25 @@ if [ -r "$LOG" ]; then
         END {
           if (c > 0) printf " in %d log entry(s), %s → %s", c, (lo=="" ? "?" : lo), (hi=="" ? "?" : hi)
         }' "$LOG")"
-    echo "wiki/log.md — $LOG_HITS hit(s) in $(awk -v pat="$PATTERN" '
+    LOG_ENTRIES="$(awk -v pat="$PATTERN" '
         /^## \[/ { hdr = $0 }
         tolower($0) ~ pat { if (hdr != seen) { c++; seen = hdr } }
-        END { print c+0 }' "$LOG") entry(s)   [NEWEST FIRST]"
-    awk -v pat="$PATTERN" '
+        END { print c+0 }' "$LOG")"
+    echo "wiki/log.md — $LOG_HITS hit(s) in $LOG_ENTRIES entry(s)   [NEWEST FIRST]"
+    # LC_ALL=C on the sort is LOAD-BEARING, not tidiness (fixed 2026-08-24).
+    # wiki/log.md carries bytes that are not valid in a UTF-8 locale. `sort`
+    # then dies with "Illegal byte sequence", the downstream awk receives an
+    # empty stream, and the ENTIRE log.md listing vanishes — while the count
+    # line above (computed on a separate path that never touches sort) still
+    # printed "28 hit(s) in 22 entry(s)", and the script still exited 0.
+    # Measured: query "metric" rendered 0 of 22 entries under LANG=C.UTF-8 and
+    # 3 of 22 under LC_ALL=C. It is DATA-DEPENDENT, so it works on most queries
+    # and fails exactly when the corpus is rich — the worst possible shape for
+    # the one tool whose doctrine is "a zero here means the wrong noun, not
+    # absent history." That doctrine is a lie if the listing silently dropped.
+    # Sorting bytewise is also correct on the merits: both keys (ISO date,
+    # line number) are ASCII.
+    _rendered="$(awk -v pat="$PATTERN" '
       /^## \[/ {
         hdr = $0; d = "0000-00-00"
         if (match($0, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/))
@@ -191,10 +205,24 @@ if [ -r "$LOG" ]; then
         if (length(line) > 150) line = substr(line, 1, 150) "…"
         printf "%s\t%s\t%d\t%s\n", d, (hdr == "" ? "(preamble)" : hdr), NR, line
       }' "$LOG" \
-    | sort -r -t"$(printf '\t')" -k1,1 -k3,3n \
+    | LC_ALL=C sort -r -t"$(printf '\t')" -k1,1 -k3,3n \
     | awk -F"$(printf '\t')" -v top="$TOP" '
         $2 != last { groups++; if (groups > top) exit; printf "\n  %s\n", $2; last = $2; shown = 0 }
-        groups <= top && shown < 3 { printf "      %d: %s\n", $3, $4; shown++ }'
+        groups <= top && shown < 3 { printf "      %d: %s\n", $3, $4; shown++ }')"
+    printf '%s\n' "$_rendered"
+    # RENDER FLOOR — the count and the listing come from two different passes,
+    # so they CAN disagree, and when they did the tool reported a confident hit
+    # count over an empty list and exited 0. Never again silently: assert that
+    # what was listed matches what was counted.
+    _shown="$(printf '%s\n' "$_rendered" | grep -c '^  ## ' || true)"
+    _shown="${_shown:-0}"
+    if [ "$LOG_ENTRIES" -lt "$TOP" ]; then _expect="$LOG_ENTRIES"; else _expect="$TOP"; fi
+    if [ "$_shown" -ne "$_expect" ]; then
+      echo ""
+      echo "  🔴 RENDER FAILURE — counted $LOG_ENTRIES entry(s), listed $_shown (expected $_expect)."
+      echo "     The listing pipeline dropped rows. This run is INCOMPLETE, not a"
+      echo "     statement about the history. Re-run with LC_ALL=C and report it."
+    fi
     echo ""
   fi
   TOTAL_HITS=$((TOTAL_HITS + LOG_HITS))
