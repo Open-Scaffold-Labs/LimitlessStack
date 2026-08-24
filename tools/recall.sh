@@ -33,12 +33,30 @@
 set -u
 
 VAULT="$(cd "$(dirname "$0")/.." && pwd)"
-# Overridable so the corpus can actually be emptied under test. It was hardcoded
-# until 2026-08-24, which made the exit-2 path UNTESTABLE: a fake vault still
-# picked this absolute path up, the probe reported "1 file searched", and the
-# empty-corpus branch was never once executed (anti-pattern #54 — a probe run
-# where the condition cannot exist). Default is unchanged.
-HUB_CLAUDE="${RECALL_HUB_CLAUDE:-/Users/matthewlavin/limitless-stack-hub/CLAUDE.md}"
+# FOUND, not guessed. Two revisions on 2026-08-24: hardcoded (which made the
+# empty-corpus path untestable — a fake vault still picked the absolute path up,
+# so exit 2 never once ran, anti-pattern #54), then an overridable default, which
+# Matt correctly called a guess with a seatbelt: if nobody exports the variable —
+# every shell on every other machine — it lands on the Mac path anyway.
+# Now it searches, takes the first candidate that really is the Hub's CLAUDE.md,
+# and falls back only as the LAST item in that search. Still overridable, so the
+# empty-corpus test stays possible.
+_find_hub_claude() {
+  local _c
+  # An EXPLICIT override wins outright — even when it points at nothing. The
+  # first version of this search treated it as merely the first candidate and
+  # searched PAST it when the file was absent, which silently re-found the real
+  # Hub and broke the empty-corpus test (exit 2 → 0). An override that only
+  # holds when it happens to be valid is not an override.
+  if [ -n "${RECALL_HUB_CLAUDE:-}" ]; then printf '%s' "${RECALL_HUB_CLAUDE:-}"; return 0; fi
+  for _c in "$HOME/limitless-stack-hub/CLAUDE.md" \
+            "$(dirname "$VAULT")/limitless-stack-hub/CLAUDE.md" \
+            "$(dirname "$(dirname "$VAULT")")/limitless-stack-hub/CLAUDE.md"; do
+    [ -n "$_c" ] && [ -f "$_c" ] && { printf '%s' "$_c"; return 0; }
+  done
+  printf '%s' "${RECALL_HUB_CLAUDE:-$HOME/limitless-stack-hub/CLAUDE.md}"
+}
+HUB_CLAUDE="$(_find_hub_claude)"
 COUNTER="$VAULT/tools/.recall-counter.tsv"
 TOP=25
 NOUN_COUNT=0

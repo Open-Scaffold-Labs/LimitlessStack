@@ -47,14 +47,25 @@ MACHINE_PATH = re.compile(r'(?:/Users/[A-Za-z0-9._-]+|/home/[A-Za-z0-9._-]+|[A-Z
 
 WAIVER = re.compile(r'#\s*path-ok:\s*\S')
 
-# An occurrence is EXEMPT when it sits inside an overridable default. Both
-# shells and Python have one idiomatic form each; anything else is unconditional.
-OVERRIDABLE = (
-    re.compile(r'\$\{[A-Za-z_][A-Za-z0-9_]*:[-=]'),        # ${VAR:-...} / ${VAR:=...}
-    re.compile(r'os\.environ\.get\s*\('),                   # os.environ.get("X", "/...")
-    re.compile(r'os\.getenv\s*\('),
-    re.compile(r'environ\.get\s*\('),
-)
+# NOTHING is auto-exempt any more, and that is the point (Matt, 2026-08-24:
+# "what if nobody says another place? shouldnt it guide them where to look
+# considering we already know what its looking for").
+#
+# The first version treated ${VAR:-/Users/…} and os.environ.get("X", "/Users/…")
+# as automatically fine. They are not fine, they are one step better than a
+# hardcode: if nobody exports the variable — which is every shell on every other
+# machine — the tool lands on the Mac path anyway. It is a guess with a seatbelt.
+#
+# The real fix is to FIND the thing: check the places it actually lives, take
+# the first candidate that contains the marker proving it is the right one, and
+# fall back only as the LAST item in that search. A fallback is a fine ending to
+# a search and a bad substitute for one.
+#
+# So a fallback is now a finding unless the author states why, exactly like the
+# unbound-variable checker's `# unbound-ok:` marker — the marker asks for a
+# reason, not for silence. This is deliberately stricter than the version that
+# shipped an hour earlier, which blessed the cheap fix I had just taken in
+# limitless-preflight.sh.
 
 
 def strip_comment(line, is_py):
@@ -126,8 +137,6 @@ def scan(path):
             continue
         code = strip_comment(raw_code, is_py)
         if not MACHINE_PATH.search(code):
-            continue
-        if any(p.search(code) for p in OVERRIDABLE):
             continue
         findings.append((n, raw.strip()[:120]))
     return findings

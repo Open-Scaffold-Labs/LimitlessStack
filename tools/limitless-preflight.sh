@@ -26,7 +26,37 @@ cd "$VAULT" || { echo "ERROR: cannot cd to vault $VAULT"; exit 2; }
 # in any shell where the variable was not already exported — which is every
 # shell on this Mac (not in .zshenv/.zshrc/.zprofile/.zlogin, not in
 # `launchctl getenv`, not exported by nightly-selfheal.sh).
-LIMITLESS_STACK_HOME="${LIMITLESS_STACK_HOME:-/Users/matthewlavin/LimitlessStack}"
+#
+# GUESSING one address is not the same as FINDING the thing (Matt, 2026-08-24:
+# "shouldnt it guide them where to look considering we already know what its
+# looking for"). A bare `${VAR:-/Users/...}` still lands on a Mac path whenever
+# nobody exports the variable — which is every shell on every other machine. So:
+# search the places it actually lives, take the first REAL match (a directory
+# that contains what we expect), and only then fall back — so the fallback is
+# the last resort in a search, not the whole strategy.
+find_repo() {
+  # $1 = marker file that proves it is the right repo, $2.. = candidate paths.
+  local _marker="$1"; shift
+  local _c
+  for _c in "$@"; do
+    [ -n "$_c" ] && [ -e "$_c/$_marker" ] && { printf '%s' "$_c"; return 0; }
+  done
+  printf '%s' "$1"   # nothing matched: echo the first candidate so messages name a real place
+}
+
+LIMITLESS_STACK_HOME="$(find_repo "install.sh" \
+  "${LIMITLESS_STACK_HOME:-}" \
+  "$HOME/LimitlessStack" \
+  "$(dirname "$VAULT")/LimitlessStack" \
+  "$(dirname "$(dirname "$VAULT")")/LimitlessStack")"
+[ -n "$LIMITLESS_STACK_HOME" ] || LIMITLESS_STACK_HOME="$HOME/LimitlessStack"
+
+HUB_REPO="$(find_repo "CLAUDE.md" \
+  "${HUB_REPO:-}" \
+  "$HOME/limitless-stack-hub" \
+  "$(dirname "$VAULT")/limitless-stack-hub" \
+  "$(dirname "$(dirname "$VAULT")")/limitless-stack-hub")"
+[ -n "$HUB_REPO" ] || HUB_REPO="$HOME/limitless-stack-hub"
 
 # ── Completion assertion ────────────────────────────────
 # A preflight that dies mid-run must NOT wear the exit code that means
@@ -432,7 +462,7 @@ fi
 # and prose-only for the other two, which is exactly how a local commit sits
 # unpushed overnight without anything noticing.
 # Read-only: reports, never commits. Missing repo = skip, not a warning.
-for _sib in "${HUB_REPO:-$HOME/limitless-stack-hub}:Hub" \
+for _sib in "$HUB_REPO:Hub" \
             "$LIMITLESS_STACK_HOME:LimitlessStack"; do
   _sib_path="${_sib%%:*}"; _sib_name="${_sib##*:}"
   if [ -d "$_sib_path/.git" ]; then

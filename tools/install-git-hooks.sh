@@ -14,7 +14,16 @@
 set -u
 
 VAULT="$(cd "$(dirname "$0")/.." && pwd)"
-LIMITLESS_STACK_HOME="${LIMITLESS_STACK_HOME:-/Users/matthewlavin/LimitlessStack}"
+# Searched, not guessed — a bare fallback lands on a Mac path on every machine
+# where nobody exports the variable. First candidate that actually contains
+# install.sh wins; the fallback is the last item in the search, not the strategy.
+for _c in "${LIMITLESS_STACK_HOME:-}" \
+          "$HOME/LimitlessStack" \
+          "$(dirname "$VAULT")/LimitlessStack" \
+          "$(dirname "$(dirname "$VAULT")")/LimitlessStack"; do
+  if [ -n "$_c" ] && [ -e "$_c/install.sh" ]; then LIMITLESS_STACK_HOME="$_c"; break; fi
+done
+LIMITLESS_STACK_HOME="${LIMITLESS_STACK_HOME:-$HOME/LimitlessStack}"
 CHECK_ONLY=false
 TARGETS=()
 
