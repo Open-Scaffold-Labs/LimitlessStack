@@ -99,7 +99,7 @@ Roll Call's USAGE REMINDERS block exists because "the tool is reachable" is not 
 
 | Tool | Readiness check | Behavioral contract |
 |---|---|---|
-| Obsidian | `wiki/index.md` readable + git clean | Read via sandbox path; follow four-tool-lookup skill |
+| Obsidian | `wiki/index.md` readable + git clean | Read via sandbox path; `tools/recall.sh <subject noun>` before asserting broken/missing/never-decided |
 | Pinecone | API key in Keychain + index stats OK + sync fresh | `pinecone-search.py` via desktop-commander; never raw client in sandbox |
 | NotebookLM | `auth check --test` passes + mirror + reminder sources fresh | `Skill(notebooklm)` + `mcp__desktop-commander__start_process`; never bare CLI in sandbox |
 | CLAUDE.md | file readable | Read at session start; trust anchor |
@@ -142,9 +142,8 @@ For everything else — wiki questions, architecture questions, ingests, code ed
 
 ## Relationship to other skills
 
-- **`four-tool-lookup`** — runs *after* Roll Call, per-question. Roll Call confirms the tools are up; four-tool-lookup is the discipline to actually use them in order.
+- **`audit-before-claim`** — runs *after* Roll Call, per-claim. Roll Call confirms the tools are up; `audit-before-claim` is the discipline for using them: `tools/recall.sh <subject noun>` before asserting broken/missing/never-decided, and the environment list before asserting "can't be done here". Roll Call is itself an application of that last rule at the tool-availability layer — before asserting "NotebookLM isn't connected," run Roll Call and let the script verify. (It absorbed the standalone `four-tool-lookup` and `verify-before-claim` skills on 2026-08-24; those had 2 and 0 lifetime invocations against this pair's 52 and 47.)
 - **`notebooklm`** — Roll Call's check #5 depends on `notebooklm auth check --test`. If that skill has been updated (new CLI version, new auth path), update the check in lockstep.
-- **`verify-before-claim`** — Roll Call is an application of verify-before-claim at the tool-availability layer. Before asserting "NotebookLM isn't connected," run Roll Call and let the script verify.
 
 ## Sources
 

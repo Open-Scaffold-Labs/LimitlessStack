@@ -1,6 +1,0 @@
-# Runtime-generated log files — never commit
-tool-audit.jsonl
-fabrication-log.jsonl
-
-# Local mode overrides — machine-specific, defaults to "log" in check-fabrication.sh
-fabrication-mode

@@ -662,49 +662,22 @@ if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
     ok "tools/ in sync with LimitlessStack canonical ($LIMITLESS_STACK_HOME)"
   fi
 
-  # HOOKS — added 2026-08-07, and the gap it closes is the point.
-  # This sync check exists to stop fixes accumulating in one vault. It covered
-  # tools/ and skills/ and NOTHING ELSE — so the five .claude/hooks/ scripts,
-  # including both PreToolUse gates, were outside the one mechanism built to
-  # propagate safeguards. The canonical had no hooks/ at all, install.sh never
-  # deployed any, and this check reported "in sync" the whole time. A project
-  # scaffolded from the canonical inherited ZERO PreToolUse gates while the Hub
-  # vault had been blocking those same commands for months. The propagator could
-  # not see this class of safeguard — anti-pattern #67, in the propagator.
-  # Enumerated dynamically like tools/, so a sixth hook is covered automatically.
-  if [ -d "$LIMITLESS_STACK_HOME/hooks" ]; then
-    hooks_clean=true
-    hooks_seen=0
-    for canon in "$LIMITLESS_STACK_HOME/hooks/"*; do
-      [ -f "$canon" ] || continue
-      fname=$(basename "$canon")
-      [ "$fname" = "settings.hooks.json" ] && continue   # template, spliced by install.sh
-      local_f="$VAULT/.claude/hooks/$fname"
-      [ -f "$local_f" ] || continue
-      hooks_seen=$((hooks_seen + 1))
-      if ! diff -q "$canon" "$local_f" >/dev/null 2>&1; then
-        hooks_clean=false
-        canonical_drift_warn ".claude/hooks/$fname" "$canon" "$local_f"
-      fi
-    done
-    # Coverage floor — a zero-file sweep and a zero-drift sweep are otherwise
-    # indistinguishable (#65: assert coverage before cleanliness).
-    if [ "$hooks_seen" -eq 0 ]; then
-      warn "hooks sync check compared NOTHING — 0 files matched" \
-           "expected $VAULT/.claude/hooks/*.sh to mirror $LIMITLESS_STACK_HOME/hooks/"
-    elif $hooks_clean; then
-      ok ".claude/hooks/ in sync with canonical ($hooks_seen files)"
-    fi
-  else
-    warn "LimitlessStack canonical has no hooks/ directory" \
-         "a project installed from it inherits NO PreToolUse gates; populate $LIMITLESS_STACK_HOME/hooks/"
-  fi
 
   skills_clean=true
-  for s in limitless-stack roll-call notebooklm four-tool-lookup verify-before-claim karpathy-guidelines; do
-    canon="$LIMITLESS_STACK_HOME/skills/$s/SKILL.md"
-    installed="$HOME/.claude/skills/$s/SKILL.md"
+  skills_seen=0
+  # DYNAMIC, like tools/ and hooks/ above. This was a HARDCODED list of six
+  # names until 2026-08-24, and that made it a SECOND evaluator of "which
+  # skills are canonical" alongside .claude-plugin/plugin.json. Removing a
+  # skill then meant editing two places, and forgetting one produced a
+  # permanent warning about a skill that no longer exists — which is what
+  # blocked the 2026-08-24 deletion of four-tool-lookup/verify-before-claim
+  # until this loop was rewritten. Enumerating the canonical directory means
+  # add/remove needs no code change here and the two lists cannot drift.
+  for canon in "$LIMITLESS_STACK_HOME/skills/"*/SKILL.md; do
     [ -f "$canon" ] || continue
+    s=$(basename "$(dirname "$canon")")
+    installed="$HOME/.claude/skills/$s/SKILL.md"
+    skills_seen=$((skills_seen + 1))
     if [ ! -f "$installed" ]; then
       skills_clean=false
       warn "skill '$s' missing from ~/.claude/skills/" \
@@ -716,8 +689,14 @@ if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
       canonical_drift_warn "skill '$s'" "$canon" "$installed"
     fi
   done
-  if $skills_clean; then
-    ok "skills in sync with LimitlessStack canonical"
+  # Coverage floor — a zero-skill sweep and a zero-drift sweep are otherwise
+  # indistinguishable (#65: assert coverage before cleanliness).
+  if [ "$skills_seen" -eq 0 ]; then
+    skills_clean=false
+    warn "skills sync check compared NOTHING — 0 skills found" \
+         "expected $LIMITLESS_STACK_HOME/skills/*/SKILL.md to exist"
+  elif $skills_clean; then
+    ok "skills in sync with LimitlessStack canonical ($skills_seen skills)"
   fi
 
   # ── The agent skill stores this loop CANNOT see (added 2026-08-20) ────
@@ -792,6 +771,39 @@ if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
          "zip each as <name>/SKILL.md into <name>.skill and install it — per ACCOUNT. The cache is read-only and rebuilt from the account store, so cp does nothing, and uploading under one account does NOT fix another."
   else
     ok "Cowork skills match ~/.claude/skills ($cw_seen scanned)"
+  fi
+
+  # ── ORPHANS: Cowork still serves a skill WE deleted (added 2026-08-24) ──
+  # The loop above skips any Cowork skill with no ~/.claude/skills counterpart
+  # — "not one of ours to judge". That is right for a vendor skill and WRONG
+  # for one we deleted: removing the reference copy moves it from "comparable"
+  # to "silently skipped", so the check goes quiet at precisely the moment it
+  # should shout. Found 2026-08-24, in the hour four-tool-lookup and
+  # verify-before-claim were deleted from canonical and ~/.claude/skills while
+  # both stayed live in BOTH Cowork account stores — which is where Cowork
+  # sessions actually load skills from. Deleting the file a checker reads must
+  # never be a way to silence the checker (#67, again, inside the propagator).
+  # Git separates ours from the vendor's: a name canonical has ever tracked and
+  # no longer has is ours, deleted. A vendor skill was never tracked, so it is
+  # never reported — absence there is a choice, exactly as before.
+  cw_orphan=""
+  if [ -d "$LIMITLESS_STACK_HOME/.git" ]; then
+    cw_deleted=$( { git -C "$LIMITLESS_STACK_HOME" diff --cached --diff-filter=D --name-only -- 'skills/*/SKILL.md' 2>/dev/null
+                    git -C "$LIMITLESS_STACK_HOME" log --all --pretty=format: --name-only --diff-filter=D -- 'skills/*/SKILL.md' 2>/dev/null
+                  } | awk -F/ 'NF>1 {print $2}' | sort -u )
+    for cw_d in $cw_deleted; do
+      [ -n "$cw_d" ] || continue
+      [ -f "$HOME/.claude/skills/$cw_d/SKILL.md" ] && continue        # not actually gone
+      [ -f "$LIMITLESS_STACK_HOME/skills/$cw_d/SKILL.md" ] && continue # resurrected
+      for cw_c in /var/folders/*/*/T/claude-hostloop-plugins/*/*/skills/"$cw_d"/SKILL.md; do
+        [ -f "$cw_c" ] || continue
+        case " $cw_orphan " in *" $cw_d "*) ;; *) cw_orphan="${cw_orphan}${cw_d} " ;; esac
+      done
+    done
+  fi
+  if [ -n "$cw_orphan" ]; then
+    warn "Cowork still SERVES deleted skill(s): ${cw_orphan%% }" \
+         "gone from canonical and ~/.claude/skills, still live in the Cowork account store where Cowork sessions load them — remove per ACCOUNT via Claude Settings → Capabilities; cp and rm cannot reach that store"
   fi
 else
   warn "LIMITLESS_STACK_HOME ($LIMITLESS_STACK_HOME) not present — can't verify Limitless Stack sync" \
@@ -1807,11 +1819,15 @@ echo "  USAGE REMINDERS — how to actually use each tool this session"
 echo "───────────────────────────────────────────────────────"
 echo ""
 echo "  • Obsidian wiki  → Read/Edit via sandbox path (/sessions/.../mnt/obsidian /...)."
-echo "                      Answer order: wiki/index.md → pages → Pinecone → NotebookLM."
-echo "                      For substantive claims, invoke Skill(four-tool-lookup)."
+echo "                      Answer order: wiki/index.md → pages → tools/recall.sh <subject noun>."
+echo "                      Search the SUBJECT, never the artifact/branch/gameplan name."
+echo "                      Before asserting broken/missing/never-decided/can't-be-done-here:"
+echo "                      Skill(audit-before-claim)."
 echo ""
-echo "  • Pinecone       → python3.11 tools/pinecone-search.py \"...\" via desktop-commander."
-echo "                      Do NOT import pinecone-py in sandbox — API key lives in Mac Keychain."
+echo "  • Pinecone       → OVER THE MONTHLY EMBEDDING CAP. Do NOT run pinecone-search.py or"
+echo "                      pinecone-sync.py, do NOT retry, do NOT 'check if it's back'."
+echo "                      Account-level, Matt's to clear. A 429 is not 'no hits' — say the"
+echo "                      corpus search was unavailable. Use tools/recall.sh instead."
 echo ""
 echo "  • NotebookLM     → Invoke Skill(notebooklm) for ANY NotebookLM operation."
 echo "                      CLI always via mcp__desktop-commander__start_process("

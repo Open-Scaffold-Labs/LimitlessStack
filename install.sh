@@ -61,15 +61,22 @@ fi
 # --- 3. Skills ---
 echo "[3/9] Installing skills to ~/.claude/skills/..."
 SKILLS_DIR="$HOME/.claude/skills"
-for skill in limitless-stack notebooklm four-tool-lookup roll-call verify-before-claim karpathy-guidelines audit-before-claim; do
+# DYNAMIC — enumerate canonical skills/ rather than a hardcoded list. Until
+# 2026-08-24 this was the THIRD hardcoded copy of "which skills exist", beside
+# .claude-plugin/plugin.json and the preflight's sync loop, so removing a skill
+# meant editing three places and forgetting one left a dangling reference.
+# Add or remove a skill directory and this, and the preflight, both follow.
+for skill_dir in "$SCRIPT_DIR/skills/"*/; do
+  [ -f "$skill_dir/SKILL.md" ] || continue
+  skill=$(basename "$skill_dir")
   mkdir -p "$SKILLS_DIR/$skill"
-  cp "$SCRIPT_DIR/skills/$skill/SKILL.md" "$SKILLS_DIR/$skill/SKILL.md"
+  cp "$skill_dir/SKILL.md" "$SKILLS_DIR/$skill/SKILL.md"
   echo "  ✓ $skill skill installed"
 done
 echo "  (limitless-stack = 7-tool protocol; notebooklm = full NotebookLM API;"
-echo "   four-tool-lookup = wiki → Pinecone → NotebookLM discipline;"
-echo "   roll-call = session-start preflight; verify-before-claim = guard against false unavailability claims;
-   karpathy-guidelines = surgical-change discipline borrowed from forrestchang/andrej-karpathy-skills)"
+echo "   roll-call = session-start preflight;"
+echo "   audit-before-claim = verify-then-state, incl. availability claims + tools/recall.sh;"
+echo "   karpathy-guidelines = surgical-change discipline borrowed from forrestchang/andrej-karpathy-skills)"
 
 # --- 4. Vault template ---
 if [ ! -d "$TARGET/wiki" ]; then
@@ -149,95 +156,6 @@ cp "$SCRIPT_DIR/self-heal/templates/self-heal.yml" "$TARGET/self-heal-templates/
 cp "$SCRIPT_DIR/self-heal/templates/self-heal-agent.js" "$TARGET/self-heal-templates/self-heal-agent.js"
 cp "$SCRIPT_DIR/self-heal/templates/SELF-HEAL-SETUP.md" "$TARGET/self-heal-templates/SELF-HEAL-SETUP.md"
 echo "  ✓ self-heal templates ready — copy into each app repo as needed"
-
-# --- 7b. Claude Code hooks + settings splice ---
-#
-# WHY THIS STEP EXISTS (added 2026-08-07). Until today the canonical shipped the
-# wiki, the tools and the skills — and NO hooks and NO settings.json. So every
-# project scaffolded from here had zero PreToolUse gates: nothing stopped a
-# session from `pip install notebooklm-py` into the ephemeral sandbox
-# (anti-pattern #10) even though the Hub vault had blocked that for months.
-# Worse, the preflight's canonical-sync check iterated tools/ and skills/ only,
-# so hooks were outside the one mechanism that exists to stop fixes accumulating
-# in a single vault. The propagator could not see this class of safeguard —
-# anti-pattern #67. Both halves are fixed: the hooks live here, and the preflight
-# now sync-checks them.
-#
-# STATE IS NOT SHIPPED. hooks/.gitignore draws the code/state line
-# (tool-audit.jsonl, fabrication-log.jsonl, fabrication-mode are runtime and
-# per-vault). This step copies only what is in the canonical hooks/ dir, which
-# was populated from `git ls-files` — a structural property, not a hand-kept
-# list that can drift (#65 addendum).
-echo "[7b/9] Installing Claude Code hooks..."
-if [ -d "$SCRIPT_DIR/hooks" ]; then
-  mkdir -p "$TARGET/.claude/hooks"
-  for h in "$SCRIPT_DIR/hooks/"*; do
-    hb=$(basename "$h")
-    [ "$hb" = "settings.hooks.json" ] && continue   # template, spliced below — not a hook
-    cp "$h" "$TARGET/.claude/hooks/$hb"
-  done
-  chmod +x "$TARGET/.claude/hooks/"*.sh 2>/dev/null || true
-  echo "  ✓ hooks copied to $TARGET/.claude/hooks/"
-
-  # settings.json is MERGED, never overwritten — the target may already have its
-  # own permissions, env, or hooks, and clobbering them would be a silent
-  # regression of somebody else's configuration. Idempotent: re-running replaces
-  # only the hook entries this installer owns (matched by script basename), and
-  # leaves every other matcher in place.
-  SETTINGS="$TARGET/.claude/settings.json"
-  TEMPLATE="$SCRIPT_DIR/hooks/settings.hooks.json"
-  if [ -f "$TEMPLATE" ]; then
-    if python3 - "$SETTINGS" "$TEMPLATE" <<'PYEOF'
-import json, os, sys
-
-settings_path, template_path = sys.argv[1], sys.argv[2]
-tmpl = json.load(open(template_path))
-
-if os.path.exists(settings_path):
-    try:
-        cur = json.load(open(settings_path))
-    except Exception as exc:
-        sys.stderr.write(f"  existing settings.json is not valid JSON ({exc}) — NOT modified\n")
-        sys.exit(1)
-else:
-    cur = {}
-
-owned = {"session-start.sh", "check-bash.sh", "check-mac-command.sh",
-         "audit-tool.sh", "check-fabrication.sh"}
-
-def is_ours(entry):
-    for h in entry.get("hooks", []):
-        if any(name in h.get("command", "") for name in owned):
-            return True
-    return False
-
-hooks = cur.setdefault("hooks", {})
-added = replaced = kept = 0
-for event, entries in tmpl["hooks"].items():
-    existing = hooks.get(event, [])
-    survivors = [e for e in existing if not is_ours(e)]
-    kept += len(survivors)
-    replaced += len(existing) - len(survivors)
-    hooks[event] = survivors + entries
-    added += len(entries)
-
-with open(settings_path, "w") as fh:
-    json.dump(cur, fh, indent=2)
-    fh.write("\n")
-print(f"  ✓ settings.json spliced — {added} hook entr"
-      f"{'y' if added == 1 else 'ies'} installed, {replaced} of ours refreshed, "
-      f"{kept} pre-existing entr{'y' if kept == 1 else 'ies'} preserved")
-PYEOF
-    then :; else
-      echo "  ⚠ settings.json splice FAILED — hooks are on disk but not wired."
-      echo "    Merge $TEMPLATE into $SETTINGS by hand."
-    fi
-  else
-    echo "  ⚠ $TEMPLATE missing — hooks copied but not wired into settings.json"
-  fi
-else
-  echo "  ⚠ $SCRIPT_DIR/hooks not found — no hooks installed (project will have NO PreToolUse gates)"
-fi
 
 # --- 8. API key check ---
 echo "[8/9] Checking API keys..."

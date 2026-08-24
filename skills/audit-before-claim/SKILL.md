@@ -8,6 +8,10 @@ description: >
   a task done, report a count or percentage, claim something "works" or is "fixed", summarize
   results, answer "did you finish X?". Use proactively before wrapping any non-trivial work and
   before any response that contains assertions of completeness, correctness, or success.
+  ALSO triggers before declaring any tool, file, repo, skill, service or capability
+  "unavailable", "unreachable", "not connected", "not installed", "missing", or "can't be done
+  here" — an availability claim is a factual claim and needs the same evidence. Absorbed the
+  former verify-before-claim skill 2026-08-24; see "It can't be done here" below.
 ---
 
 # Audit Before Claim
@@ -215,10 +219,27 @@ we already hold is a factual error; so is **an assertion that something is broke
 never decided, when the history says otherwise.** Both are trusting what you believe over what is
 written down and checkable.
 
-**The trigger — four claim shapes, not all claims:**
+**The trigger — four claim shapes, plus the whole OpenScaffold surface:**
 
 > Before asserting **broken · missing · not built · should be changed**, run
 > `tools/recall.sh <subject noun>` and paste the result into your reasoning.
+
+> **Also before any substantive claim about OpenScaffold itself** — architecture, a specific app
+> (OpenFirehouse, FireHazmat, the Hub, OpenChiropractor, OpenSalon), the Limitless Stack, Paperclip,
+> Matt or Dale, CLAUDE.md protocol, table-prefix / seed-module / package conventions, or **why we
+> chose X over Y**. If the question *sounds* like you should already know it, that is the trigger,
+> not the exemption.
+
+⚠ **This second trigger arrived here on 2026-08-24 from the deleted `four-tool-lookup` skill, and
+the way it nearly got lost is the lesson.** That skill was correct and had **2** lifetime
+invocations; it was deleted on that number. But invocation count measures whether a skill FIRED,
+not whether it was RIGHT — and the same day's audit had already measured that these skills never
+self-fire (2 `Skill()` calls in a 6 MB transcript, both because Matt typed the name). Its scope was
+then left resting on `CLAUDE.md` prose alone, in a corpus where prose caught **0 of 9** errors that
+session. Deleting an unused-but-correct guard and relying on a written rule is a lateral move, not
+a simplification. **Never retire a guard on usage data alone: diff its content against what
+remains, and move anything unique onto a lever that actually gets pulled — this one, at 47 lifetime
+invocations.** Matt caught this; the deletion had already been staged.
 
 **Search the SUBJECT, never the artifact.** A branch name, gameplan name, or filename is what the
 work was *called*; the ruling that governs it is filed under what it was *about*. This is the
@@ -252,6 +273,54 @@ beats adding rule #133 beside one.
 It cannot tell "about it" from "mentions it" — two heuristics for that were built and tested
 against real data on 2026-08-24, and **both passed the known-bad control**, so neither shipped.
 The discrimination is yours. The tool's only job is to make sure you cannot skip it.
+
+## "It can't be done here" is a claim about the ENVIRONMENT
+
+Third costume, same failure: asserting from belief instead of from a check. **"X is unavailable"
+is a factual claim about the environment and needs a command behind it like any other.** Absorbed
+from the former `verify-before-claim` skill, 2026-08-24 — that skill was written for exactly this,
+was mounted the whole session it was needed, and was invoked **zero** times in five months against
+this skill's 47. The content was right; the lever was wrong. One lever that gets pulled beats two
+that don't.
+
+**The trigger — stop if you are about to type any of these:**
+
+> "X isn't available" · "X is unreachable" · "I don't have access to X" · "X isn't connected" ·
+> "I can't access X from here" · "X isn't installed" · "there's genuinely nothing to check here" ·
+> "that tool isn't working"
+
+**Work the environments before reporting failure.** One "no" is one environment's answer, not the
+answer:
+
+1. **Sandbox** — Bash/Python/Node, file tools. No Keychain, no GUI, no Mac filesystem except the mount.
+2. **Workspace mount** — `/sessions/*/mnt/<folder>/`; readable from BOTH sandbox and Mac. The bridge.
+3. **Desktop Commander** — runs on the Mac. Keychain, brew, `gh`, `git`, `python3.11`, `notebooklm`.
+   Most sandbox failures are credential or path failures and clear here.
+4. **Chrome MCP** — DOM, navigation, forms. Not connected ≠ unavailable; DC's `open` is a fallback.
+5. **Computer Use** — native apps, after `request_access`.
+6. **Ask the user** — last, and only with receipts for 1–5.
+
+**Before concluding a path does not exist, `ls` the parent.** The recorded failures are all the
+same shape — the data was present at a different address:
+
+- 2026-08-24, twice in one hour: *"the skills scanner has genuinely nothing to scan here"* — then
+  `ls "$(dirname "$VAULT")/.claude/skills"` returned **18 entries**. The script was reading
+  `$HOME/.claude/skills`, which does not resolve in that environment. The second assertion was
+  prefaced *"I want to be accurate rather than agreeable,"* which made an unchecked claim sound
+  like rigour. **That is worse than being plainly wrong**, and it is why a non-agreeable posture
+  is not a substitute for a check.
+- Same day: the trust-anchor checker reported 8-of-8 SKIP and exit 0 in a sandbox — reported as
+  environment-bound, actually a hardcoded-path bug. Both were fixed by making the tool *discover*
+  its target rather than guess one address.
+
+**How to report a genuine unavailability** — never the bare claim:
+
+> "Tried X in the sandbox → `<error>`. Via Desktop Commander → `<result>`. Chrome MCP can't help
+> because `<reason>`. Next step I'd suggest: `<concrete>`."
+
+**The standard.** If the user can disprove your "unavailable" in thirty seconds by naming a path
+you didn't try, you didn't work the list. And note the asymmetry with a plain wrong answer: a
+false "it's broken" sends the user to fix something that isn't broken.
 
 ## Worked examples
 
