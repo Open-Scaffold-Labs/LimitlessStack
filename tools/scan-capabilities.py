@@ -37,9 +37,37 @@ import time
 from pathlib import Path
 
 HOME = Path.home()
+VAULT = Path(__file__).resolve().parent.parent
+
+
+def _find_skills_dir() -> Path:
+    """Locate the installed-skills tree, wherever this is running.
+
+    ADDED 2026-08-24, after claiming twice that a Cowork sandbox has "genuinely
+    nothing to scan". It does: 18 skills were mounted at <vault>/../.claude/skills
+    the whole time, while this script looked only at ~/.claude/skills — which
+    does not exist there. Same defect class as the hardcoded Mac paths in
+    trust-anchor-check.py, found the same night: the data was present at a
+    different address, and "this environment can't do it" was a guess, not a
+    measurement.
+
+    Order matters. ~/.claude/skills is tried FIRST so behaviour on Matt's Mac
+    (123 skills) is bit-for-bit unchanged; the vault-relative candidates only
+    win where that home tree is absent. $CLAUDE_SKILLS_DIR overrides everything
+    for any layout neither covers.
+    """
+    env = os.environ.get("CLAUDE_SKILLS_DIR")
+    for cand in (Path(env) if env else None,
+                 HOME / ".claude" / "skills",
+                 VAULT.parent / ".claude" / "skills",
+                 VAULT.parent.parent / ".claude" / "skills"):
+        if cand and cand.is_dir():
+            return cand
+    return HOME / ".claude" / "skills"   # keep the canonical name in messages
+
 
 # ── Source trees ────────────────────────────────────────────────────────────
-USER_SKILLS_DIR    = HOME / ".claude" / "skills"
+USER_SKILLS_DIR    = _find_skills_dir()
 COWORK_SESSIONS_GLOB = HOME / "Library" / "Application Support" / "Claude" / "local-agent-mode-sessions"
 HOSTLOOP_GLOB      = Path("/var/folders").glob("*/*/T/claude-hostloop-plugins/*/skills")
 
