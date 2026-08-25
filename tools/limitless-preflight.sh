@@ -826,8 +826,25 @@ if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
     # overdue-TODO scan lied for two days.
     skip "no Cowork skill cache on disk to compare (nothing scanned — NOT a pass)"
   elif [ -n "$cw_stale" ]; then
-    warn "Cowork skill(s) stale vs ~/.claude/skills: ${cw_stale%% } (scanned $cw_seen)" \
-         "zip each as <name>/SKILL.md into <name>.skill and install it — per ACCOUNT. The cache is read-only and rebuilt from the account store, so cp does nothing, and uploading under one account does NOT fix another."
+    # accepted(), not warn() — see the accepted() header. This clears ONLY by an
+    # upload through Claude Settings → Capabilities, in a store whose on-disk copy
+    # is read-only and rebuilt from the remote: cp cannot reach it, and uploading
+    # under one store does not fix another. That is the stated bar — an
+    # account-level blocker a session is unable to act on — and it is the same
+    # shape as the Pinecone cap already accepted below.
+    #
+    # ⚠ It was a warn() until 2026-08-25, and the cost was NOT the yellow. It was
+    # that every session dutifully re-reported a state Matt already knew, to Matt,
+    # as though it were news — until he said "stop telling me i know about that".
+    # CLAUDE.md records the identical arc for Pinecone: 30 log lines re-reporting a
+    # permanent known state, when the instruction had been to make future sessions
+    # KNOW it so they would stop. Re-reporting a known blocker is not diligence; it
+    # dilutes the report and hands the human back their own open item.
+    #
+    # It still PRINTS, so the state never goes invisible, and the two skills the
+    # other store is missing are still named. It just stops counting as drift.
+    accepted "Cowork skill(s) behind ~/.claude/skills: ${cw_stale%% } (scanned $cw_seen) — known, Matt's to clear when he next uses that store" \
+         "zip each as <name>/SKILL.md into <name>.skill → Claude Settings → Capabilities. Per store; the on-disk cache is read-only, so cp does nothing. Do NOT re-report this to Matt — he knows."
   else
     ok "Cowork skills match ~/.claude/skills ($cw_seen scanned)"
   fi
@@ -861,8 +878,11 @@ if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
     done
   fi
   if [ -n "$cw_orphan" ]; then
-    warn "Cowork still SERVES deleted skill(s): ${cw_orphan%% }" \
-         "gone from canonical and ~/.claude/skills, still live in the Cowork account store where Cowork sessions load them — remove per ACCOUNT via Claude Settings → Capabilities; cp and rm cannot reach that store"
+    # accepted() for the same reason as the staleness check above: `rm` cannot
+    # reach that store either, so no session can ever clear this. It prints and
+    # names the skills; it does not pin the verdict or get re-reported to Matt.
+    accepted "Cowork still SERVES deleted skill(s): ${cw_orphan%% } — known, clears on Matt's next use of that store" \
+         "remove via Claude Settings → Capabilities in the store that still lists them; rm cannot reach it. Do NOT re-report this to Matt — he knows."
   fi
 else
   warn "LIMITLESS_STACK_HOME ($LIMITLESS_STACK_HOME) not present — can't verify Limitless Stack sync" \
