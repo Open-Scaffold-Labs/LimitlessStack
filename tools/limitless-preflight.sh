@@ -564,7 +564,21 @@ if [ -r "$VAULT/wiki/index.md" ]; then
       fi
     fi
     # 3b: explicit "DO AFTER YYYY-MM-DD" past today
-    DEADLINE=$(grep -oE 'DO AFTER [0-9]{4}-[0-9]{2}-[0-9]{2}|by [0-9]{4}-[0-9]{2}-[0-9]{2}|before [0-9]{4}-[0-9]{2}-[0-9]{2}' "$todofile" 2>/dev/null | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1)
+    # The date phrase must sit ON AN OPEN CHECKBOX. Without that constraint this
+    # matched English prose and reported the OPPOSITE of a deadline: on
+    # 2026-08-24 it flagged "1 overdue item ... 29d past explicit deadline
+    # 2026-07-25" sourced from my-tasks/mlav1114.md:40 — "finished program (OF
+    # leave module 1.2a→1.2f, all closed BY 2026-07-25)", a sentence recording
+    # that work was DONE. Measured across all four task files: `DO AFTER` (the
+    # deliberate marker) appears 0 times, and `by|before <date>` appears exactly
+    # ONCE — not on a checkbox. So the check's entire lifetime yield was one
+    # false positive, on the day it shipped. Constraining it to open items costs
+    # nothing (it still fires the moment a real deadline is written on a real
+    # task) and removes the whole false-positive class: a date in narrative is
+    # never a commitment.
+    DEADLINE=$(grep -E '^[[:space:]]*-[[:space:]]*\[ \]' "$todofile" 2>/dev/null \
+      | grep -oE 'DO AFTER [0-9]{4}-[0-9]{2}-[0-9]{2}|by [0-9]{4}-[0-9]{2}-[0-9]{2}|before [0-9]{4}-[0-9]{2}-[0-9]{2}' \
+      | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1)
     if [ -n "$DEADLINE" ]; then
       DEADLINE_TS=$(date -j -f "%Y-%m-%d" "$DEADLINE" +%s 2>/dev/null || echo 0)
       if [ "$DEADLINE_TS" -gt 0 ] && [ "$DEADLINE_TS" -lt "$NOW_TS" ]; then
