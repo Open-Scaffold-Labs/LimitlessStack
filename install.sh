@@ -116,6 +116,14 @@ cp "$SCRIPT_DIR/tools/shell-unbound-check.py"    "$TARGET/tools/shell-unbound-ch
 cp "$SCRIPT_DIR/tools/git-pre-commit.sh"         "$TARGET/tools/git-pre-commit.sh"
 cp "$SCRIPT_DIR/tools/install-git-hooks.sh"      "$TARGET/tools/install-git-hooks.sh"
 cp "$SCRIPT_DIR/tools/test-preflight-abort.sh"   "$TARGET/tools/test-preflight-abort.sh"
+# Citation resolver + its fence (added 2026-08-24). A bare `client/src/...` path
+# exists in more than one working tree, and a session resolving one from memory
+# disputed a CORRECT citation and nearly filed a false finding. whichtree.sh owns
+# the single working-tree enumeration — limitless-preflight.sh CALLS it for the
+# routing block rather than repeating the loop, so a project that gets the
+# preflight without this file loses that block entirely.
+cp "$SCRIPT_DIR/tools/whichtree.sh"              "$TARGET/tools/whichtree.sh"
+cp "$SCRIPT_DIR/tools/test-whichtree.sh"         "$TARGET/tools/test-whichtree.sh"
 # The nightly-selfheal launchd plist TEMPLATE (rendered + wired in step 9).
 cp "$SCRIPT_DIR/tools/com.openscaffold.nightly-selfheal.plist.template" \
    "$TARGET/tools/com.openscaffold.nightly-selfheal.plist.template"
@@ -124,7 +132,8 @@ chmod +x "$TARGET/tools/session-bootstrap.sh" "$TARGET/tools/limitless-preflight
          "$TARGET/tools/nightly-selfheal.sh" "$TARGET/tools/trust-anchor-check.py" \
          "$TARGET/tools/anti-pattern-candidates.py" "$TARGET/tools/shell-unbound-check.py" \
          "$TARGET/tools/git-pre-commit.sh" "$TARGET/tools/install-git-hooks.sh" \
-         "$TARGET/tools/test-preflight-abort.sh"
+         "$TARGET/tools/test-preflight-abort.sh" \
+         "$TARGET/tools/whichtree.sh" "$TARGET/tools/test-whichtree.sh"
 # .git/hooks is NOT version-controlled, so the gate must be installed per clone.
 # Do it here rather than leaving it to whoever remembers — that is the whole
 # point of the class this guards.

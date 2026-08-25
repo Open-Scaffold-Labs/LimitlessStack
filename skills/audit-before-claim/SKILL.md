@@ -274,6 +274,39 @@ It cannot tell "about it" from "mentions it" — two heuristics for that were bu
 against real data on 2026-08-24, and **both passed the known-bad control**, so neither shipped.
 The discrimination is yours. The tool's only job is to make sure you cannot skip it.
 
+### A CITATION is a claim too — resolve the path before you dispute it
+
+Same failure, smallest costume. On 2026-08-24 I disputed a **correct** citation of
+`client/src/design/tokens.css` by resolving it from memory to `openfirehouse-neris` — a tree that
+does not contain that file at all — and nearly filed a false finding against a reader whose
+evidence was exact (`openscaffold-wiki/wiki/log.md:11346`). That night's fix added the routing
+line *"cite a repo with every path"* and recorded the residue plainly: *"the second trap —
+resolving a relative path to the wrong repo — has no mechanical guard"*
+(`openscaffold-wiki/wiki/log.md:11381`).
+
+It has one now. A bare path is ambiguous **only because nothing resolves it**, and resolving it is
+one command:
+
+```
+tools/whichtree.sh <bare/path>[:line]      # a full <repo>/<path> citation also works
+```
+
+It scans every working tree under `$HOME` — by remote, not by folder name — and says which ones
+hold the path, ranked by HEAD commit date. **The exit code is the answer:**
+
+- **0** — exactly one tree. Unambiguous; cite it.
+- **3** — no tree holds it. The path does not exist as written.
+- **4** — several trees hold it. **AMBIGUOUS** — resolve before citing. `NEWEST HEAD` marks the
+  most recently committed tree; that is not evidence of which one the author meant.
+- **5** — cited as `<repo>/<path>` where that repo does **not** hold it, but another does.
+  **MISATTRIBUTED** — the exact shape of the error above.
+- **2** — the scan did not run (zero trees enumerated). Nothing was checked; an empty answer is
+  meaningless unless the search happened.
+
+Two facts that make guessing worse than useless here: `client/src/design/tokens.css` really is in
+**two** trees (`limitless-stack-hub` and `the-match`), and one repo can have **four** working
+trees — `OpenFirehouse-private` and `paperclip` each do. The folder name is not the repo.
+
 ## "It can't be done here" is a claim about the ENVIRONMENT
 
 Third costume, same failure: asserting from belief instead of from a check. **"X is unavailable"

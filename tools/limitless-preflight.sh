@@ -1832,11 +1832,11 @@ echo "────────────────────────�
 echo "  USAGE REMINDERS — how to actually use each tool this session"
 echo "───────────────────────────────────────────────────────"
 echo ""
-# ── WHICH WORKING TREE IS CURRENT (added + twice corrected 2026-08-24) ──────
+# ── WHICH WORKING TREE IS CURRENT (added + THREE times corrected 2026-08-24) ──
 # Nine recorded instances of a session reading a stale tree, finding code that
 # shipped weeks ago missing, and reporting finished work as open.
 #
-# ⚠ TWO CORRECTIONS, both found by reading this block's own output:
+# ⚠ THREE CORRECTIONS, every one found by reading this block's own output:
 #  1. v1 enumerated DIRECTORY NAMES and called them "repos". They are not.
 #     ~/openfirehouse and ~/openfirehouse-neris are two WORKING TREES of ONE
 #     repo — Open-Scaffold-Labs/OpenFirehouse-private — and v1 missed
@@ -1846,44 +1846,22 @@ echo ""
 #     origin/main ref, which is only as fresh as its last fetch — so an unfetched
 #     clone reports itself CURRENT. phase4 claimed CURRENT at migration 0115
 #     while neris was at 0143. A confident false green is the worst outcome here,
-#     so ranking is now LOCAL and fetch-independent: newest HEAD commit date wins.
+#     so ranking is LOCAL and fetch-independent: newest HEAD commit date wins.
+#  3. v3 globbed "$HOME"/*/ — ONE level — and so was blind to the VAULT ITSELF
+#     (openscaffold-wiki, two levels down), to a FOURTH paperclip tree, and to a
+#     second OpenFirehouseMobile tree. It printed a confident listing over an
+#     incomplete set, which is the same false-green shape as correction 2.
 #
-# Only groups with MORE THAN ONE tree are printed — a single-tree repo has no
-# ambiguity to warn about, and this block is routing, not a wall of inventory.
-_tree_rows=""; _groups=0
-for _r in "$HOME"/*/; do
-  _r="${_r%/}"
-  # -e not -d: a git WORKTREE's .git is a FILE ("gitdir: ..."), not a directory.
-  [ -e "$_r/.git" ] || continue
-  _rem=$(git -C "$_r" remote get-url origin 2>/dev/null) || continue
-  [ -n "$_rem" ] || continue
-  _rem=${_rem##*/}; _rem=${_rem%.git}
-  _ts=$(git -C "$_r" log -1 --format=%ct 2>/dev/null) || continue
-  [ -n "$_ts" ] || continue
-  _br=$(git -C "$_r" branch --show-current 2>/dev/null); _br=${_br:-DETACHED}
-  _mig=$(ls "$_r"/docs/migrations/*.sql 2>/dev/null | sed 's|.*/||' | sort -t- -k1,1n | tail -1)
-  _mig=${_mig%%-*}; [ -n "$_mig" ] && _mig=" · migration $_mig" || _mig=""
-  _tree_rows="${_tree_rows}${_rem}\t${_ts}\t$(basename "$_r")\t${_br}\t${_mig}\n"
-done
-if [ -z "$_tree_rows" ]; then
-  echo "  • working trees      ⊘ none found under \$HOME — cannot say which tree is current"
+# THE ENUMERATION NOW LIVES IN EXACTLY ONE PLACE — tools/whichtree.sh — and is
+# CALLED here rather than repeated. Two evaluators of "which trees exist" drift,
+# and this vault has caught that disease three times (anti-pattern #46). The same
+# script also RESOLVES a bare path to its tree, which is the guard this block
+# could previously only ask for in prose.
+if [ -f "$VAULT/tools/whichtree.sh" ]; then
+  bash "$VAULT/tools/whichtree.sh" --list || true
 else
-  _multi=$(printf "%b" "$_tree_rows" | cut -f1 | sort | uniq -d)
-  for _g in $_multi; do
-    _groups=$((_groups + 1))
-    echo "  • $_g — MORE THAN ONE WORKING TREE:"
-    printf "%b" "$_tree_rows" | awk -F'\t' -v g="$_g" '$1==g' | sort -t"$(printf '\t')" -k2,2nr \
-      | awk -F'\t' 'NR==1{printf "      %-34s ✅ NEWEST  (%s)%s\n",$3,$4,$5; next}
-                     {printf "      %-34s ⚠ older    (%s)%s\n",$3,$4,$5}'
-  done
-  if [ "$_groups" -eq 0 ]; then
-    echo "  • working trees      every repo has exactly one tree — no ambiguity to resolve"
-  else
-    echo "                      → Ranked by HEAD commit DATE, locally. Not by origin/main:"
-    echo "                        an unfetched clone reports itself current and lies."
-    echo "                      → Read NEWEST. A stale tree makes shipped work look unbuilt."
-    echo "                      → Cite the REPO with every path: <repo>/<file>:<line>."
-  fi
+  echo "  • working trees      ⊘ tools/whichtree.sh missing — cannot say which tree is"
+  echo "                         current, and cannot resolve a bare path to its repo."
 fi
 echo ""
 echo "  • Obsidian wiki  → Read/Edit via sandbox path (/sessions/.../mnt/obsidian /...)."
