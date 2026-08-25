@@ -1832,6 +1832,47 @@ echo "────────────────────────�
 echo "  USAGE REMINDERS — how to actually use each tool this session"
 echo "───────────────────────────────────────────────────────"
 echo ""
+# ── WHICH CHECKOUT IS CURRENT (added 2026-08-24) ────────────────────────────
+# Nine recorded instances of the same failure: a session reads a stale clone,
+# finds code that shipped weeks ago missing, and reports finished work as open.
+# Live today: ~/openfirehouse sits on a parked branch 729 commits behind
+# origin/main at migration 0062, while ~/openfirehouse-neris is main at 0143.
+# Deliberately NOT a warning — the parked branch is a RULED state (deferred to
+# Dale 2026-06-15, confirmed unmerged), so a yellow here would be permanent
+# noise nobody can clear. It is ROUTING: say which tree to read, at the moment
+# a session decides where to look. Measured per run, never hardcoded, so it
+# cannot rot into a claim about a checkout that has since moved.
+_cur_repo=""; _cur_n=-1; _reported=0
+for _r in "$HOME/openfirehouse" "$HOME/openfirehouse-neris" "$HOME/OpenFirehouseMobile"; do
+  # -e not -d: a git WORKTREE's .git is a FILE ("gitdir: ..."), not a directory.
+  # openfirehouse-neris IS a worktree of openfirehouse, so `-d` silently skipped
+  # the only current tree and this block confidently routed sessions to the
+  # stale one. Caught by reading the block's own output, 2026-08-24.
+  [ -e "$_r/.git" ] || continue
+  _reported=$((_reported + 1))
+  _br=$(git -C "$_r" branch --show-current 2>/dev/null); _br=${_br:-DETACHED}
+  _behind=$(git -C "$_r" rev-list --count HEAD..origin/main 2>/dev/null); _behind=${_behind:-?}
+  _mig=$(ls "$_r"/docs/migrations/*.sql 2>/dev/null | sed 's|.*/||' | sort -t- -k1,1n | tail -1)
+  _mig=${_mig%%-*}; _mig=${_mig:-none}
+  if [ "$_behind" != "?" ] && [ "$_behind" -eq 0 ] 2>/dev/null; then
+    printf "  • %-22s CURRENT  (%s, migration %s)\n" "$(basename "$_r")" "$_br" "$_mig"
+    if [ "$_cur_n" -lt 0 ]; then _cur_repo="$_r"; _cur_n=0; fi
+  else
+    printf "  • %-22s ⚠ STALE — %s commit(s) behind origin/main (%s, migration %s)\n" \
+      "$(basename "$_r")" "$_behind" "$_br" "$_mig"
+  fi
+done
+if [ "$_reported" -eq 0 ]; then
+  echo "  • OF checkouts       ⊘ none found — cannot say which tree is current"
+elif [ -n "$_cur_repo" ]; then
+  echo "                      → READ THE ONE MARKED CURRENT. A stale clone makes shipped"
+  echo "                        work look unbuilt; that has happened nine times."
+  echo "                      → Cite a repo with every path: <repo>/<file>:<line>. A bare"
+  echo "                        client/src/... path exists in more than one tree."
+else
+  echo "  • OF checkouts       ⚠ NONE is current — every clone is behind origin/main"
+fi
+echo ""
 echo "  • Obsidian wiki  → Read/Edit via sandbox path (/sessions/.../mnt/obsidian /...)."
 echo "                      Answer order: wiki/index.md → pages → tools/recall.sh <subject noun>."
 echo "                      Search the SUBJECT, never the artifact/branch/gameplan name."
