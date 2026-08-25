@@ -1832,45 +1832,58 @@ echo "────────────────────────�
 echo "  USAGE REMINDERS — how to actually use each tool this session"
 echo "───────────────────────────────────────────────────────"
 echo ""
-# ── WHICH CHECKOUT IS CURRENT (added 2026-08-24) ────────────────────────────
-# Nine recorded instances of the same failure: a session reads a stale clone,
-# finds code that shipped weeks ago missing, and reports finished work as open.
-# Live today: ~/openfirehouse sits on a parked branch 729 commits behind
-# origin/main at migration 0062, while ~/openfirehouse-neris is main at 0143.
-# Deliberately NOT a warning — the parked branch is a RULED state (deferred to
-# Dale 2026-06-15, confirmed unmerged), so a yellow here would be permanent
-# noise nobody can clear. It is ROUTING: say which tree to read, at the moment
-# a session decides where to look. Measured per run, never hardcoded, so it
-# cannot rot into a claim about a checkout that has since moved.
-_cur_repo=""; _cur_n=-1; _reported=0
-for _r in "$HOME/openfirehouse" "$HOME/openfirehouse-neris" "$HOME/OpenFirehouseMobile"; do
+# ── WHICH WORKING TREE IS CURRENT (added + twice corrected 2026-08-24) ──────
+# Nine recorded instances of a session reading a stale tree, finding code that
+# shipped weeks ago missing, and reporting finished work as open.
+#
+# ⚠ TWO CORRECTIONS, both found by reading this block's own output:
+#  1. v1 enumerated DIRECTORY NAMES and called them "repos". They are not.
+#     ~/openfirehouse and ~/openfirehouse-neris are two WORKING TREES of ONE
+#     repo — Open-Scaffold-Labs/OpenFirehouse-private — and v1 missed
+#     ~/openfirehouse-phase4 and ~/openfirehouse-phase5 entirely. The REMOTE is
+#     the identity; the folder name is not.
+#  2. v2 ranked trees by `rev-list HEAD..origin/main`. That reads the tree's OWN
+#     origin/main ref, which is only as fresh as its last fetch — so an unfetched
+#     clone reports itself CURRENT. phase4 claimed CURRENT at migration 0115
+#     while neris was at 0143. A confident false green is the worst outcome here,
+#     so ranking is now LOCAL and fetch-independent: newest HEAD commit date wins.
+#
+# Only groups with MORE THAN ONE tree are printed — a single-tree repo has no
+# ambiguity to warn about, and this block is routing, not a wall of inventory.
+_tree_rows=""; _groups=0
+for _r in "$HOME"/*/; do
+  _r="${_r%/}"
   # -e not -d: a git WORKTREE's .git is a FILE ("gitdir: ..."), not a directory.
-  # openfirehouse-neris IS a worktree of openfirehouse, so `-d` silently skipped
-  # the only current tree and this block confidently routed sessions to the
-  # stale one. Caught by reading the block's own output, 2026-08-24.
   [ -e "$_r/.git" ] || continue
-  _reported=$((_reported + 1))
+  _rem=$(git -C "$_r" remote get-url origin 2>/dev/null) || continue
+  [ -n "$_rem" ] || continue
+  _rem=${_rem##*/}; _rem=${_rem%.git}
+  _ts=$(git -C "$_r" log -1 --format=%ct 2>/dev/null) || continue
+  [ -n "$_ts" ] || continue
   _br=$(git -C "$_r" branch --show-current 2>/dev/null); _br=${_br:-DETACHED}
-  _behind=$(git -C "$_r" rev-list --count HEAD..origin/main 2>/dev/null); _behind=${_behind:-?}
   _mig=$(ls "$_r"/docs/migrations/*.sql 2>/dev/null | sed 's|.*/||' | sort -t- -k1,1n | tail -1)
-  _mig=${_mig%%-*}; _mig=${_mig:-none}
-  if [ "$_behind" != "?" ] && [ "$_behind" -eq 0 ] 2>/dev/null; then
-    printf "  • %-22s CURRENT  (%s, migration %s)\n" "$(basename "$_r")" "$_br" "$_mig"
-    if [ "$_cur_n" -lt 0 ]; then _cur_repo="$_r"; _cur_n=0; fi
-  else
-    printf "  • %-22s ⚠ STALE — %s commit(s) behind origin/main (%s, migration %s)\n" \
-      "$(basename "$_r")" "$_behind" "$_br" "$_mig"
-  fi
+  _mig=${_mig%%-*}; [ -n "$_mig" ] && _mig=" · migration $_mig" || _mig=""
+  _tree_rows="${_tree_rows}${_rem}\t${_ts}\t$(basename "$_r")\t${_br}\t${_mig}\n"
 done
-if [ "$_reported" -eq 0 ]; then
-  echo "  • OF checkouts       ⊘ none found — cannot say which tree is current"
-elif [ -n "$_cur_repo" ]; then
-  echo "                      → READ THE ONE MARKED CURRENT. A stale clone makes shipped"
-  echo "                        work look unbuilt; that has happened nine times."
-  echo "                      → Cite a repo with every path: <repo>/<file>:<line>. A bare"
-  echo "                        client/src/... path exists in more than one tree."
+if [ -z "$_tree_rows" ]; then
+  echo "  • working trees      ⊘ none found under \$HOME — cannot say which tree is current"
 else
-  echo "  • OF checkouts       ⚠ NONE is current — every clone is behind origin/main"
+  _multi=$(printf "%b" "$_tree_rows" | cut -f1 | sort | uniq -d)
+  for _g in $_multi; do
+    _groups=$((_groups + 1))
+    echo "  • $_g — MORE THAN ONE WORKING TREE:"
+    printf "%b" "$_tree_rows" | awk -F'\t' -v g="$_g" '$1==g' | sort -t"$(printf '\t')" -k2,2nr \
+      | awk -F'\t' 'NR==1{printf "      %-34s ✅ NEWEST  (%s)%s\n",$3,$4,$5; next}
+                     {printf "      %-34s ⚠ older    (%s)%s\n",$3,$4,$5}'
+  done
+  if [ "$_groups" -eq 0 ]; then
+    echo "  • working trees      every repo has exactly one tree — no ambiguity to resolve"
+  else
+    echo "                      → Ranked by HEAD commit DATE, locally. Not by origin/main:"
+    echo "                        an unfetched clone reports itself current and lies."
+    echo "                      → Read NEWEST. A stale tree makes shipped work look unbuilt."
+    echo "                      → Cite the REPO with every path: <repo>/<file>:<line>."
+  fi
 fi
 echo ""
 echo "  • Obsidian wiki  → Read/Edit via sandbox path (/sessions/.../mnt/obsidian /...)."
