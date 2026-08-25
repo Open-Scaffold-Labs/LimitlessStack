@@ -676,6 +676,51 @@ if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
     ok "tools/ in sync with LimitlessStack canonical ($LIMITLESS_STACK_HOME)"
   fi
 
+  # ── THE OTHER DIRECTION (added 2026-08-25) ───────────────────────────────
+  # The loop above walks CANONICAL and compares each file to the vault. A tool
+  # that exists only in the VAULT is not in the list being walked, so it is
+  # structurally invisible to it.
+  #
+  # Observed live 2026-08-24: tools/whichtree.sh existed only in the vault for
+  # about an hour while this check printed "tools/ in sync" on every run. Had
+  # the promote been forgotten, install.sh would have shipped a preflight that
+  # CALLS whichtree.sh --list to projects that never receive the script. Same
+  # shape as the .claude/hooks gap this contract already documents: the
+  # mechanism built to propagate tooling could not see a whole class of it.
+  #
+  # THREE EXEMPTIONS, each a RULE rather than a name, so the list cannot rot:
+  #   1. untracked files — scratch and generated output, not shared tooling
+  #   2. canonical holds the same basename ANYWHERE (pinecone-*.py live in
+  #      canonical/pinecone/, not canonical/tools/)
+  #   3. canonical holds <basename>.template (the rendered nightly-selfheal
+  #      plist is generated from a canonical template)
+  # Measured 2026-08-25: those three leave exactly ZERO findings on a correctly
+  # synced vault — which is what makes a finding here worth reading.
+  promote_seen=0
+  promote_missing=""
+  promote_names=$(find "$LIMITLESS_STACK_HOME" -type f -not -path '*/.git/*' 2>/dev/null \
+                  | sed 's|.*/||' | sort -u)
+  for local_t in "$VAULT/tools/"*; do
+    [ -f "$local_t" ] || continue
+    tname=$(basename "$local_t")
+    git -C "$VAULT" ls-files --error-unmatch "tools/$tname" >/dev/null 2>&1 || continue
+    promote_seen=$((promote_seen + 1))
+    printf '%s\n' "$promote_names" | grep -qxF "$tname" && continue
+    printf '%s\n' "$promote_names" | grep -qxF "$tname.template" && continue
+    promote_missing="$promote_missing $tname"
+  done
+  # Coverage floor: a zero-item sweep and a clean sweep are otherwise identical,
+  # and this vault has shipped a checkmark over an empty set twice.
+  if [ "$promote_seen" -eq 0 ]; then
+    warn "canonical promote-check scanned ZERO git-tracked vault tools — not measuring anything" \
+         "expected git-tracked files in $VAULT/tools/ — a zero-item sweep looks exactly like a clean one"
+  elif [ -n "$promote_missing" ]; then
+    warn "vault tool(s) never promoted to canonical:$promote_missing (scanned $promote_seen)" \
+         "cp each into $LIMITLESS_STACK_HOME/tools/ AND add a cp line to install.sh — a tool missing from install.sh is never deployed to a new project"
+  else
+    ok "every git-tracked vault tool has a canonical counterpart (scanned $promote_seen)"
+  fi
+
 
   skills_clean=true
   skills_seen=0
