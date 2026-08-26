@@ -257,18 +257,34 @@ ok()    {
     CURRENT_TOOL_METRIC="$1"
   fi
 }
+# A remediation that NAMES a notebooklm command carries the routing rule with
+# it. Added 2026-08-25 after anti-pattern #19 recurred: the rule ("invoke
+# Skill(notebooklm) for ANY NotebookLM operation") is printed once in the
+# session-start USAGE REMINDERS, but the remediation strings are read and
+# executed much later, and a bare command on the line is what actually gets
+# copied. The session that tripped it followed #19's *scoping* half correctly
+# and missed only the *skill* half — the half with no reminder beside the
+# command. Prefixing here rather than editing ~8 call sites means new
+# notebooklm remediations inherit it and it cannot rot out of sync.
+# unbound-ok: $2 is always passed by every warn/bad/accepted call site.
+_route_hint() {
+  case "$1" in
+    *notebooklm*) printf 'Skill(notebooklm) FIRST, then: %s' "$1" ;;
+    *)            printf '%s' "$1" ;;
+  esac
+}
 warn()  {
   echo "  ⚠ $1"
   YELLOW=$((YELLOW+1))
   CURRENT_TOOL_YELLOW=$((CURRENT_TOOL_YELLOW+1))
-  WARNINGS+=("$1  →  $2")
+  WARNINGS+=("$1  →  $(_route_hint "$2")")
   [ -z "$CURRENT_TOOL_METRIC" ] && CURRENT_TOOL_METRIC="⚠ $1"
 }
 bad()   {
   echo "  ✗ $1"
   RED=$((RED+1))
   CURRENT_TOOL_RED=$((CURRENT_TOOL_RED+1))
-  BLOCKERS+=("$1  →  $2")
+  BLOCKERS+=("$1  →  $(_route_hint "$2")")
   [ -z "$CURRENT_TOOL_METRIC" ] && CURRENT_TOOL_METRIC="✗ $1"
 }
 skip()  { echo "  ⊘ $1"; }
@@ -289,7 +305,7 @@ skip()  { echo "  ⊘ $1"; }
 accepted() {
   echo "  ℹ $1"
   ACCEPTED=$((ACCEPTED+1))
-  ACCEPTED_NOTES+=("$1  →  $2")
+  ACCEPTED_NOTES+=("$1  →  $(_route_hint "$2")")
 }
 
 # ── Network reachability gate (added 2026-07-27) ────────
