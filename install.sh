@@ -124,6 +124,17 @@ cp "$SCRIPT_DIR/tools/test-preflight-abort.sh"   "$TARGET/tools/test-preflight-a
 # preflight without this file loses that block entirely.
 cp "$SCRIPT_DIR/tools/whichtree.sh"              "$TARGET/tools/whichtree.sh"
 cp "$SCRIPT_DIR/tools/test-whichtree.sh"         "$TARGET/tools/test-whichtree.sh"
+# Log-order fences (added 2026-08-27). wiki/log.md had been written from BOTH
+# ends — 70 entries newest-first at the top, the rest ascending — so
+# session-bootstrap's `tail -5` reported FILE order and hid a 2026-08-26
+# correction recording that Matt had reversed a shipped decision. recall.sh had
+# the sibling defect: its count pass counted entry-TITLE matches, its render
+# pass skipped headings, so a title-only hit was counted and never listed. Both
+# are fixed and both fences are mutation-proven; ship them together with the
+# tools they fence, or a scaffolded project inherits the fix with nothing
+# holding it in place.
+cp "$SCRIPT_DIR/tools/test-session-bootstrap.sh"  "$TARGET/tools/test-session-bootstrap.sh"
+cp "$SCRIPT_DIR/tools/test-recall-render.sh"      "$TARGET/tools/test-recall-render.sh"
 # The nightly-selfheal launchd plist TEMPLATE (rendered + wired in step 9).
 cp "$SCRIPT_DIR/tools/com.openscaffold.nightly-selfheal.plist.template" \
    "$TARGET/tools/com.openscaffold.nightly-selfheal.plist.template"
@@ -133,6 +144,7 @@ chmod +x "$TARGET/tools/session-bootstrap.sh" "$TARGET/tools/limitless-preflight
          "$TARGET/tools/anti-pattern-candidates.py" "$TARGET/tools/shell-unbound-check.py" \
          "$TARGET/tools/git-pre-commit.sh" "$TARGET/tools/install-git-hooks.sh" \
          "$TARGET/tools/test-preflight-abort.sh" \
+         "$TARGET/tools/test-session-bootstrap.sh" "$TARGET/tools/test-recall-render.sh" \
          "$TARGET/tools/whichtree.sh" "$TARGET/tools/test-whichtree.sh"
 # .git/hooks is NOT version-controlled, so the gate must be installed per clone.
 # Do it here rather than leaving it to whoever remembers — that is the whole

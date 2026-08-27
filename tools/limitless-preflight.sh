@@ -622,6 +622,61 @@ if [ -r "$VAULT/wiki/index.md" ]; then
   else
     warn "${#OVERDUE[@]} overdue item(s) across $SCANNED task file(s): ${OVERDUE[*]}" "address the items, then update the task file"   # unbound-ok: else-branch of ${#OVERDUE[@]} -eq 0
   fi
+
+  # Check 4: wiki/log.md ENTRY ORDER — file position must agree with entry date.
+  # Added 2026-08-27 after measuring what disagreeing costs. log.md has been
+  # written from BOTH ends: 70 entries ran newest-first at the top (lines
+  # 5..2452) while the remaining 596 ascended. Measured consequences:
+  #   • session-bootstrap.sh's `grep | tail -5` reported FILE order, so a
+  #     2026-08-26 `correction` recording that Matt had REVERSED a shipped
+  #     decision sat at heading index 0 of 668 — invisible to every new
+  #     session's orientation. Fixed the same day; that block now date-sorts.
+  #   • ALL 150 `log.md:<line>` citations in this vault are broken — a census,
+  #     not a sample, verified by git archaeology with a positive control. A
+  #     prepend shifts every line beneath it; `log.md:7591` was valid across
+  #     133 revisions and is now 143 lines off.
+  #   • anti-pattern-candidates.py had to be re-keyed onto dates (2026-08-19)
+  #     after its gather returned 08-07 entries as "newest" with 33 newer ones
+  #     sitting unread, nearly running the rec #5 review on a stale corpus.
+  #
+  # 🔴 DO NOT "fix" a finding here by REFLOWING the file. Verified 2026-08-27:
+  # 19 entries contain positional references ("the entry above", "entry below"),
+  # so reordering silently rewrites their meaning; and every consumer is now
+  # date-aware (recall.sh, anti-pattern-candidates.py, session-bootstrap.sh), so
+  # a reflow buys nothing functional while re-breaking every citation again.
+  # The fix is to keep APPENDING. This check exists to catch not doing that.
+  #
+  # BASELINED, deliberately. The 31 historical backward transitions cannot be
+  # removed without the reflow this check forbids, so warning on them would put
+  # a permanent yellow on Roll Call — and an instrument that cries wolf gets
+  # ignored. Warn only when the count RISES above the recorded baseline, i.e.
+  # when a session has just prepended. If it drops, the baseline is stale: say
+  # so rather than staying silent, because silence would hide a real change.
+  LOG_ORDER_BASELINE=31   # measured 2026-08-27 over 668 headings
+  LOG_MD="$VAULT/wiki/log.md"
+  if [ -r "$LOG_MD" ]; then
+    LOG_HEADS_N=$(grep -c '^## \[' "$LOG_MD" 2>/dev/null || true)
+    LOG_HEADS_N="${LOG_HEADS_N:-0}"
+    # ISO dates compare correctly as strings; awk sees one date per line.
+    LOG_BACKWARD=$(grep -oE '^## \[[0-9]{4}-[0-9]{2}-[0-9]{2}' "$LOG_MD" 2>/dev/null \
+      | sed 's/^## \[//' \
+      | awk 'NR>1 && $0 < prev { n++ } { prev = $0 } END { print n+0 }')
+    LOG_BACKWARD="${LOG_BACKWARD:-0}"
+    if [ "$LOG_HEADS_N" -eq 0 ]; then
+      # COVERAGE FLOOR: a zero-heading scan and an in-order log are otherwise
+      # indistinguishable, and the former is a broken check, not a clean bill.
+      warn "log-order check scanned 0 entry headings in wiki/log.md — the check is vacuous" \
+           "expected lines matching '^## [YYYY-MM-DD]'; verify the grep in tools/limitless-preflight.sh"
+    elif [ "$LOG_BACKWARD" -gt "$LOG_ORDER_BASELINE" ]; then
+      warn "wiki/log.md ORDER REGRESSED — $LOG_BACKWARD backward date transition(s) across $LOG_HEADS_N entries, baseline $LOG_ORDER_BASELINE: a session PREPENDED instead of appending" \
+           "move the new entry to the END of wiki/log.md (CLAUDE.md: append-only). Do NOT reflow the file — 19 entries carry 'the entry above' references. Cite entries as '[YYYY-MM-DD] op | label', never by line number."
+    elif [ "$LOG_BACKWARD" -lt "$LOG_ORDER_BASELINE" ]; then
+      warn "wiki/log.md order IMPROVED ($LOG_BACKWARD backward transitions, baseline $LOG_ORDER_BASELINE) — the baseline is stale" \
+           "update LOG_ORDER_BASELINE in tools/limitless-preflight.sh to $LOG_BACKWARD so the check keeps its teeth"
+    else
+      ok "wiki/log.md order held ($LOG_HEADS_N entries, $LOG_BACKWARD backward transitions = baseline)"
+    fi
+  fi
 fi
 echo ""
 

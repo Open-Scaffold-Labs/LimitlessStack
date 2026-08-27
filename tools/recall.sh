@@ -6,9 +6,18 @@
 # FORMULATION: sessions search for the ARTIFACT NAME (a branch, a gameplan, a
 # file) and never for the SUBJECT (what the thing is about). Three documented
 # occurrences, two of them repeats of each other:
-#   wiki/log.md:157   searched `fix/fi-department-scoping`; never `station_id`
-#   wiki/log.md:8306  searched the gameplan; never `companion` / form factor
-#   wiki/log.md:8333  "The Stack held the facts and still could not deliver them"
+#   [2026-08-07] correction | I called an INTENTIONAL design a cross-tenant bug
+#                 — searched `fix/fi-department-scoping`; never `station_id`
+#   [2026-08-14] retraction | OF — the iPad entry above framed a 10-DAY-OLD
+#                 ruling as new — searched the gameplan; never `form factor`
+#   [2026-08-14] schema | The Stack held the facts and still could not deliver
+#                 them
+# ⚠ These were `wiki/log.md:157 / :8306 / :8333` until 2026-08-27. NEVER cite
+# this log by line number: log.md has been written from both ends, so a prepend
+# shifts every line beneath it. Census that day, by git archaeology with a
+# positive control: ALL 150 line citations in this vault resolved to the wrong
+# content — 142 had been valid once and drifted, 8 pointed at a blank line when
+# written. Cite `[YYYY-MM-DD] op | label`, which is what this tool groups by.
 # The decisive query in the first was measured at NINE SECONDS.
 #
 # USAGE
@@ -198,6 +207,23 @@ if [ -r "$LOG" ]; then
         hdr = $0; d = "0000-00-00"
         if (match($0, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/))
           d = substr($0, RSTART, RLENGTH)
+        # A match in the ENTRY TITLE is a real hit, and the count pass above
+        # counts it (that pass does not `next` past headings). Rendering nothing
+        # here made the two passes disagree, so the RENDER FLOOR below fired on
+        # every query whose only match was a title — the single most likely way
+        # a session searches for a ruling. Measured 2026-08-27 on the live log:
+        # "cad filter" counted 1 hit / listed 0; "type floor" counted 2 entries
+        # / listed 1. The floor was right and loud; the renderer was wrong.
+        # Emit a row so the entry appears, labelled so the reader knows the
+        # match sits in the heading rather than the body.
+        # ⚠ NO APOSTROPHES ANYWHERE IN THIS AWK PROGRAM. It is inside a
+        # single-quoted shell string, so one apostrophe closes the quote and
+        # bash dies with "syntax error near unexpected token }". Hit while
+        # writing this very comment, and the failure was a FALSE GREEN: the
+        # script aborted before the render, so the RENDER FAILURE string never
+        # printed and a grep for it reported clean.
+        if (tolower($0) ~ pat)
+          printf "%s\t%s\t%d\t%s\n", d, hdr, NR, "(the match is in the entry TITLE)"
         next
       }
       tolower($0) ~ pat {
