@@ -135,6 +135,39 @@ try:
     if reminder.get('notebook_id'):
         rid = reminder['notebook_id'].split('-')[0]
         dedupe_items.append(f'{rid}:reminder')
+    # ONE ENTRY PER NOTEBOOK, not per ROUTE. routes is keyed by PATH PREFIX, so
+    # a notebook receiving many prefixes was emitted once per prefix: measured
+    # 2026-08-27 on this manifest, 25 routes produced 27 entries for 8 distinct
+    # notebooks (openfirehouse 11x, hub 8x). Three consequences, all real:
+    #   1. The sweep fetch phase backgrounds one job per entry, each
+    #      redirecting to SWEEP_DIR/<label>.json, so 11 processes wrote the
+    #      SAME path concurrently (and the same .exit sidecar). Harmless while
+    #      every fetch returns identical bytes (measured 0/40 corrupt), but
+    #      22/40 corrupt once the payloads DIFFER, which is exactly what
+    #      happens when something changes the notebook mid-sweep. The race
+    #      activated precisely when the check had something to report.
+    #   2. 27 live source-list round trips per run where 8 suffice, ~2.8s each.
+    #   3. One dirty notebook produced 11 identical warns, so a run with 3
+    #      distinct findings reported a yellow count of 14.
+    # dict.fromkeys preserves first-seen order, keeping fetch order stable.
+    #
+    # NOTHING IN THIS BLOCK MAY CONTAIN A BACKTICK, A DOUBLE QUOTE, OR A BARE
+    # DOLLAR SIGN -- comments included. This python source sits inside a
+    # DOUBLE-QUOTED shell string, so bash processes it before python ever sees
+    # it: a backtick becomes command substitution and a double quote CLOSES the
+    # string, truncating the program.
+    # Both mistakes were made here on 2026-08-27, in this order:
+    #   1. a yellow count written in backticks -- bash ran it, giving
+    #      'line 165: yellow:: command not found'
+    #   2. the comment written to WARN about (1) quoted those error strings in
+    #      double quotes, which closed the shell string and emptied the manifest
+    #      output entirely, so every downstream grep returned nothing and an
+    #      empty OBSIDIAN_MIN_PAGES reached an integer test:
+    #      'line 473: [: : integer expression expected'
+    # Both were caught by test-preflight-abort.sh assertion 6 (no bash
+    # diagnostics on stderr). Same embedded-quoting class as the apostrophe that
+    # broke recall.sh the same night. Use single quotes here, or no quotes.
+    dedupe_items = list(dict.fromkeys(dedupe_items))
     print('DEDUPE_NOTEBOOKS=' + ' '.join(dedupe_items))
     print('REMINDER_FILES=' + ' '.join(reminder.get('files', [])))
     if default:
@@ -1575,6 +1608,14 @@ except Exception:
     sweep_total=0
     sweep_dirty=""
     sweep_skipped=0
+    # How many notebooks this sweep actually covers. Was hardcoded "8" in both
+    # summary lines below, which made `$((8 - sweep_skipped))` able to go
+    # NEGATIVE once the entry list stopped being 8 long — and it stopped being 8
+    # long the moment a route was added, because DEDUPE_NOTEBOOKS was built per
+    # route (fixed 2026-08-27; it emitted 27 entries for 8 notebooks). Count the
+    # list instead of asserting its length.
+    sweep_count=$(printf '%s\n' $notebooks | grep -c . || true)   # unbound-ok: $notebooks is set in both branches above
+    sweep_count="${sweep_count:-0}"
     # Fetch phase (parallel, 2026-08-21): every notebook's listing lands in
     # its own temp file; the counting loop below then reads the files. Each
     # fetch also records its exit code in a sidecar file — nonzero routes
@@ -1674,9 +1715,9 @@ except Exception:
       fi
     done
     if [ -z "$sweep_dirty" ] && [ "$sweep_skipped" -eq 0 ]; then
-      ok "notebooklm dedupe sweep: 0 duplicates across 8 notebooks"
+      ok "notebooklm dedupe sweep: 0 duplicates across $sweep_count notebooks"
     elif [ -z "$sweep_dirty" ] && [ "$sweep_skipped" -gt 0 ]; then
-      ok "notebooklm dedupe sweep: 0 duplicates across $((8 - sweep_skipped))/8 notebooks ($sweep_skipped skipped)"
+      ok "notebooklm dedupe sweep: 0 duplicates across $((sweep_count - sweep_skipped))/$sweep_count notebooks ($sweep_skipped skipped)"
     fi
     # If sweep_dirty is non-empty, individual warns above already covered it.
     rm -rf "$SWEEP_DIR"

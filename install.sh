@@ -135,6 +135,14 @@ cp "$SCRIPT_DIR/tools/test-whichtree.sh"         "$TARGET/tools/test-whichtree.s
 # holding it in place.
 cp "$SCRIPT_DIR/tools/test-session-bootstrap.sh"  "$TARGET/tools/test-session-bootstrap.sh"
 cp "$SCRIPT_DIR/tools/test-recall-render.sh"      "$TARGET/tools/test-recall-render.sh"
+# DEDUPE_NOTEBOOKS must hold one entry per NOTEBOOK, not one per ROUTE. It was
+# built by iterating NOTEBOOK_ROUTES (keyed by path prefix), so on the Hub vault
+# 25 routes produced 27 entries for 8 notebooks — openfirehouse 11x. The sweep
+# then backgrounded 11 fetches all redirecting to the SAME temp path, made 19
+# redundant network round trips, and printed 11 identical warns for one finding.
+# Every project with more than one route per notebook inherits that, so the
+# fence travels with the preflight.
+cp "$SCRIPT_DIR/tools/test-dedupe-notebooks.sh"   "$TARGET/tools/test-dedupe-notebooks.sh"
 # The nightly-selfheal launchd plist TEMPLATE (rendered + wired in step 9).
 cp "$SCRIPT_DIR/tools/com.openscaffold.nightly-selfheal.plist.template" \
    "$TARGET/tools/com.openscaffold.nightly-selfheal.plist.template"
@@ -145,6 +153,7 @@ chmod +x "$TARGET/tools/session-bootstrap.sh" "$TARGET/tools/limitless-preflight
          "$TARGET/tools/git-pre-commit.sh" "$TARGET/tools/install-git-hooks.sh" \
          "$TARGET/tools/test-preflight-abort.sh" \
          "$TARGET/tools/test-session-bootstrap.sh" "$TARGET/tools/test-recall-render.sh" \
+         "$TARGET/tools/test-dedupe-notebooks.sh" \
          "$TARGET/tools/whichtree.sh" "$TARGET/tools/test-whichtree.sh"
 # .git/hooks is NOT version-controlled, so the gate must be installed per clone.
 # Do it here rather than leaving it to whoever remembers — that is the whole
