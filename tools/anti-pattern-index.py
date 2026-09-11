@@ -105,6 +105,11 @@ TRIPWIRES = [
     ('a probe you have now run THREE times that keeps returning the same thing',
      ["29", "40", "25"],
      "An unchanging reading is a claim about the INSTRUMENT until proven otherwise. Stop polling; check the probe (`ps -o etime=`, log mtime). Never poll liveness by `pgrep -f <name>` — it matches your own poll."),
+    ('a row count you just measured — "only N of M", "most X have no Y", "so it would look populated"',
+     ["77", "18"],
+     "A count settles what the SCHEMA holds, never what the product is FOR — the DB is pre-launch "
+     "seed data. It passes every verification check because the NUMBER is true; the inference is "
+     "what is wrong. Write the sentence it implies about real users and check you have evidence for THAT."),
 ]
 
 # §1 — SITUATION -> entries. Every non-exempt heading must appear at least once.
@@ -142,7 +147,7 @@ SITUATIONS = [
     ("run a market or competitive pass",
      ["47", "51", "31"]),
     ("write a spec, phase plan or gameplan",
-     ["47", "63", "31", "26", "73"]),
+     ["47", "63", "31", "26", "73", "77"]),
     ("decide HOW MUCH to build — scope, polish, or reopen a settled design decision",
      ["73", "23a", "26", "47"]),
     ("ask Matt a question",
@@ -177,6 +182,8 @@ SITUATIONS = [
      ["59", "26", "50"]),
     ("deploy or merge to production",
      ["11", "22", "33", "43"]),
+    ("measure a database and reason from the number",
+     ["77", "29", "40", "68", "18"]),
 ]
 # ------------------------------------------------------------ /CURATED ------
 

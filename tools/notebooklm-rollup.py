@@ -101,6 +101,36 @@ ROLLUPS = {
             "wiki/synthesis/openscaffold-db-separation-runbook-2026-06-13.md",
         ],
     },
+    # Added 2026-09-11. These eight routed INDIVIDUALLY into the general bucket
+    # (cdaa7a43) — they match no project prefix — and were holding 8 of its 47
+    # slots against the 50-source Standard-tier cap. The filename deliberately
+    # starts `stack-` so it matches no NOTEBOOK_ROUTES prefix and falls through
+    # to DEFAULT_ROUTE, i.e. it lands back in cdaa7a43 in place of the eight.
+    # Same remedy as the 2026-05-03 and 2026-07-13 prunes, but CONSOLIDATION
+    # rather than deletion: nothing is dropped, the files stay on disk and in
+    # git, and the notebook goes 47 -> 40.
+    "wiki/synthesis/stack-handoffs-rollup.md": {
+        "tags": "[limitless-stack, vault, tooling, handoff, rollup]",
+        "title": "Limitless Stack / vault — handoff rollup",
+        "blurb": (
+            "Every vault-and-tooling session handoff that belongs to no single project,\n"
+            "newest first, in one NotebookLM source: task-file reliability and shell\n"
+            "safety, the night audit, whichtree and its three retractions, the log-order\n"
+            "and memory fixes, notice templates, the NERIS picker session, and Hub chat.\n"
+            "Trust the [ACTIVE] section; the rest is superseded history, kept because the\n"
+            "retractions and open items in it are load-bearing."
+        ),
+        "members": [
+            "wiki/synthesis/handoff-2026-08-27-log-order-and-memory-fixes.md",
+            "wiki/synthesis/handoff-2026-08-25-whichtree-and-three-retractions.md",
+            "wiki/synthesis/handoff-2026-08-24-night-audit-and-cleanup.md",
+            "wiki/deliverables/HANDOFF-2026-08-24-TASK-RELIABILITY-AND-SHELL-SAFETY.md",
+            "wiki/synthesis/session-handoff-2026-08-20-hub-chat.md",
+            "wiki/synthesis/session-handoff-2026-08-04.md",
+            "wiki/synthesis/session-handoff-2026-08-03-neris-picker.md",
+            "wiki/synthesis/handoff-notice-templates-2026-08-03.md",
+        ],
+    },
 }
 
 
@@ -117,6 +147,7 @@ ROLLUP_EXEMPT = {
     # The rollups themselves are not members of themselves.
     "wiki/synthesis/openfirehouse-handoffs-rollup.md",
     "wiki/synthesis/hub-handoffs-rollup.md",
+    "wiki/synthesis/stack-handoffs-rollup.md",
 }
 
 

@@ -134,6 +134,20 @@ EXCLUDE_FROM_NOTEBOOKS = [
     "wiki/synthesis/session-handoff-2026-06-13.md",
     "wiki/synthesis/session-handoff-2026-06-14.md",
     "wiki/synthesis/session-handoff-2026-06-15.md",
+    # CONSOLIDATED 2026-09-11 into wiki/synthesis/stack-handoffs-rollup.md, which
+    # takes their place in cdaa7a43 (47 sources -> 40, against the 50-source cap).
+    # These eight matched no project prefix, so each held its own slot in the general
+    # bucket. Unlike the 05-03 and 07-13 prunes above this is NOT a drop: every byte
+    # is in the rollup, verbatim, newest-first. Files stay on disk and in git as the
+    # primary read path. Regenerate with tools/notebooklm-rollup.py.
+    "wiki/synthesis/handoff-2026-08-27-log-order-and-memory-fixes.md",
+    "wiki/synthesis/handoff-2026-08-25-whichtree-and-three-retractions.md",
+    "wiki/synthesis/handoff-2026-08-24-night-audit-and-cleanup.md",
+    "wiki/deliverables/HANDOFF-2026-08-24-TASK-RELIABILITY-AND-SHELL-SAFETY.md",
+    "wiki/synthesis/session-handoff-2026-08-20-hub-chat.md",
+    "wiki/synthesis/session-handoff-2026-08-04.md",
+    "wiki/synthesis/session-handoff-2026-08-03-neris-picker.md",
+    "wiki/synthesis/handoff-notice-templates-2026-08-03.md",
 ]
 
 # ── Excluded from the DEFAULT bucket only (added 2026-08-24) ─────────────────
