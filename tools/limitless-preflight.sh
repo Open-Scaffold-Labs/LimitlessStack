@@ -685,7 +685,22 @@ if [ -r "$VAULT/wiki/index.md" ]; then
   # ignored. Warn only when the count RISES above the recorded baseline, i.e.
   # when a session has just prepended. If it drops, the baseline is stale: say
   # so rather than staying silent, because silence would hide a real change.
-  LOG_ORDER_BASELINE=31   # measured 2026-08-27 over 668 headings
+  # RE-BASELINED 2026-09-11: 31 -> 32 over 750 headings (was 31 over 668).
+  # The 32nd backward transition today is entry 735 — a 2026-09-04 entry sitting
+  # after a 2026-09-05 one, around wiki/log.md line 15913. MEASURED, not assumed:
+  # the count already read 32 at every revision sampled from 2026-09-04 onward
+  # (09-04, 09-08, 09-09, and all six of 09-10), so the rise happened before this
+  # session and no session is being let off. ⚠ What is NOT established is that it
+  # was this same entry each time — the 09-05 entry it follows did not exist on
+  # 09-04, so the composition changed even though the total did not. Do not quote
+  # this comment as proof about any individual entry.
+  # It is not fixed by MOVING the entry: CLAUDE.md cancels the reflow on evidence
+  # (19 entries carry 'the entry above' references; every consumer is date-aware),
+  # so moving it rewrites those meanings to buy nothing. The baseline exists to
+  # stay quiet on historical damage and fire when the count RISES; raising it to
+  # the measured floor is what keeps its teeth. Do not raise it again without
+  # naming the new entry and the date you measured it.
+  LOG_ORDER_BASELINE=32   # measured 2026-09-11 over 750 headings
   LOG_MD="$VAULT/wiki/log.md"
   if [ -r "$LOG_MD" ]; then
     LOG_HEADS_N=$(grep -c '^## \[' "$LOG_MD" 2>/dev/null || true)
