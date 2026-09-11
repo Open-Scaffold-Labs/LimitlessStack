@@ -105,6 +105,12 @@ TRIPWIRES = [
     ('a probe you have now run THREE times that keeps returning the same thing',
      ["29", "40", "25"],
      "An unchanging reading is a claim about the INSTRUMENT until proven otherwise. Stop polling; check the probe (`ps -o etime=`, log mtime). Never poll liveness by `pgrep -f <name>` — it matches your own poll."),
+    ('you just backgrounded a job (`nohup … &`) — or are about to type `sleep`',
+     ["29", "49", "13a"],
+     "`sleep N` in a foreground call is NOT a poll: it blocks the turn, spends the `nohup`, and "
+     "guesses a duration. Poll with a read that returns immediately (`tail -5 <log>`, "
+     "`read_process_output` on the PID) and do real work between polls. If you backgrounded it, "
+     "checking it is YOUR job — a human prompting you to look is the failure."),
     ('a row count you just measured — "only N of M", "most X have no Y", "so it would look populated"',
      ["77", "18"],
      "A count settles what the SCHEMA holds, never what the product is FOR — the DB is pre-launch "
@@ -164,8 +170,8 @@ SITUATIONS = [
      ["16"]),
     ("reason about authorization or a write path on a table",
      ["44", "61", "46"]),
-    ("run a slow verifier, or go quiet for more than a few minutes",
-     ["49", "13a"]),
+    ("run a slow verifier, background a long job, or go quiet for more than a few minutes",
+     ["49", "13a", "29"]),
     ("start a session, or answer from active context",
      ["1", "21", "6", "8", "19", "10", "63"]),
     ("write to or refresh a NotebookLM source",
