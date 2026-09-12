@@ -851,21 +851,51 @@ if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
   # blocked the 2026-08-24 deletion of four-tool-lookup/verify-before-claim
   # until this loop was rewritten. Enumerating the canonical directory means
   # add/remove needs no code change here and the two lists cannot drift.
-  for canon in "$LIMITLESS_STACK_HOME/skills/"*/SKILL.md; do
-    [ -f "$canon" ] || continue
-    s=$(basename "$(dirname "$canon")")
-    installed="$HOME/.claude/skills/$s/SKILL.md"
+  # ⚠ WALKS EVERY FILE IN EACH SKILL, not just SKILL.md. Rewritten 2026-09-12,
+  # when audit-before-claim gained references/ for progressive disclosure and
+  # this loop — iterating */SKILL.md — could not see either new file. That is
+  # the FOURTH instance of this contract's own recurring gap (.claude/hooks,
+  # then tools/whichtree.sh, then the Cowork account stores): the mechanism
+  # built to propagate an asset cannot see a NEW KIND of asset. Enumerating
+  # files means a skill may grow references/, scripts/ or assets/ and stay
+  # covered with no code change here.
+  # Both directions, for the reason the tools/ loop above is bidirectional: a
+  # file present only in ~/.claude/skills is invisible to a canonical-first walk.
+  # NOTE: fed by process substitution, NOT a pipe — a piped `while` runs in a
+  # subshell and every counter increment below would be discarded.
+  skill_files_seen=0
+  for canon_dir in "$LIMITLESS_STACK_HOME/skills/"*/; do
+    [ -d "$canon_dir" ] || continue
+    [ -f "${canon_dir}SKILL.md" ] || continue
+    s=$(basename "$canon_dir")
+    inst_dir="$HOME/.claude/skills/$s"
     skills_seen=$((skills_seen + 1))
-    if [ ! -f "$installed" ]; then
+    if [ ! -f "$inst_dir/SKILL.md" ]; then
       skills_clean=false
       warn "skill '$s' missing from ~/.claude/skills/" \
-           "mkdir -p ~/.claude/skills/$s && cp $LIMITLESS_STACK_HOME/skills/$s/SKILL.md ~/.claude/skills/$s/SKILL.md"
+           "mkdir -p '$inst_dir' && cp -R '${canon_dir}'. '$inst_dir'/"
       continue
     fi
-    if ! diff -q "$canon" "$installed" >/dev/null 2>&1; then
-      skills_clean=false
-      canonical_drift_warn "skill '$s'" "$canon" "$installed"
-    fi
+    while IFS= read -r rel; do
+      [ -n "$rel" ] || continue
+      skill_files_seen=$((skill_files_seen + 1))
+      if [ ! -f "$inst_dir/$rel" ]; then
+        skills_clean=false
+        warn "skill '$s' — '$rel' missing from ~/.claude/skills/$s/" \
+             "cp -R '${canon_dir}'. '$inst_dir'/"
+      elif ! diff -q "${canon_dir}${rel}" "$inst_dir/$rel" >/dev/null 2>&1; then
+        skills_clean=false
+        canonical_drift_warn "skill '$s' ($rel)" "${canon_dir}${rel}" "$inst_dir/$rel"
+      fi
+    done < <(cd "$canon_dir" && find . -type f ! -name '.DS_Store' | sed 's|^\./||' | sort)
+    while IFS= read -r rel; do
+      [ -n "$rel" ] || continue
+      if [ ! -f "${canon_dir}${rel}" ]; then
+        skills_clean=false
+        warn "skill '$s' — '$rel' is in ~/.claude/skills/$s/ but NOT in canonical" \
+             "cp '$inst_dir/$rel' '${canon_dir}${rel}'   # or delete it if it is dead"
+      fi
+    done < <(cd "$inst_dir" && find . -type f ! -name '.DS_Store' | sed 's|^\./||' | sort)
   done
   # Coverage floor — a zero-skill sweep and a zero-drift sweep are otherwise
   # indistinguishable (#65: assert coverage before cleanliness).
@@ -873,8 +903,12 @@ if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
     skills_clean=false
     warn "skills sync check compared NOTHING — 0 skills found" \
          "expected $LIMITLESS_STACK_HOME/skills/*/SKILL.md to exist"
+  elif [ "$skill_files_seen" -eq 0 ]; then
+    skills_clean=false
+    warn "skills sync compared 0 FILES across $skills_seen skill(s)" \
+         "the per-file walk found nothing — check the find/sed in the loop above"
   elif $skills_clean; then
-    ok "skills in sync with LimitlessStack canonical ($skills_seen skills)"
+    ok "skills in sync with LimitlessStack canonical ($skills_seen skills, $skill_files_seen files)"
   fi
 
   # ── The agent skill stores this loop CANNOT see (added 2026-08-20) ────
