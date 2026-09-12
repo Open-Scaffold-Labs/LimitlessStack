@@ -11,7 +11,7 @@ description: >
   ALSO triggers before asserting that anything is broken, missing, never decided, or OPEN /
   UNRULED / the user's to decide; before declaring any tool, file, repo, skill, service or
   capability "unavailable", "unreachable", "not connected", "not installed", "missing" or "can't
-  be done here"; and before citing or disputing a <repo>/<path>:line citation. Every one of those
+  be done here"; and before citing or disputing a repo/path:line citation. Every one of those
   is a factual claim and needs the same evidence. Absorbed the former verify-before-claim skill
   2026-08-24.
 ---
