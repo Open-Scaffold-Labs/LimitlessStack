@@ -148,7 +148,7 @@ Skip the audit pass for:
 - Pure conversational responses with no factual claims ("how are you?", "what is X?")
 - Clarifying questions to the user (the question itself is not a claim)
 - Discussions of trade-offs / options (so long as the trade-offs are accurately described)
-  — **but see "Recommendations are claims too" below: this exemption does NOT cover a
+  — **but see "The research check" below: this exemption does NOT cover a
   recommendation that contradicts research we already hold.**
 - Plain explanations of how something works in concept, when no claim of "I did this" is involved
 
@@ -167,8 +167,8 @@ Apply the audit pass for:
 
 **Search the SUBJECT, never the artifact.** A branch name, gameplan name, or filename is what the
 work was *called*; the ruling that governs it is filed under what it was *about*. This is the
-whole failure mode, and it has three recorded instances, two of them repeats of each other:
-
+whole failure mode, and it has three recorded instances, two of them repeats of each other —
+all three, with the log entries that record them, are in `references/incidents.md`.
 
 
 **Reading the result — the exit code is load-bearing:**
@@ -182,18 +182,16 @@ whole failure mode, and it has three recorded instances, two of them repeats of 
   result is meaningless unless the search actually happened.
 
 
-
 **Honest limitation, stated so nobody over-trusts it.** `recall.sh` surfaces; it does not reason.
 It cannot tell "about it" from "mentions it" — two heuristics for that were built and tested
 against real data on 2026-08-24, and **both passed the known-bad control**, so neither shipped.
 The discrimination is yours. The tool's only job is to make sure you cannot skip it.
 
 
-
 ### `whichtree.sh` — resolve a citation before you cite or dispute it
 
-It has one now. A bare path is ambiguous **only because nothing resolves it**, and resolving it is
-one command:
+A bare path is ambiguous **only because nothing resolves it**, and resolving it is one command
+(the incident that earned this check is in `references/incidents.md`):
 
 ```
 tools/whichtree.sh <bare/path>[:line]      # a full <repo>/<path> citation also works
@@ -207,10 +205,9 @@ hold the path, ranked by HEAD commit date. **The exit code is the answer:**
 - **4** — several trees hold it. **AMBIGUOUS** — resolve before citing. `NEWEST HEAD` marks the
   most recently committed tree; that is not evidence of which one the author meant.
 - **5** — cited as `<repo>/<path>` where that repo does **not** hold it, but another does.
-  **MISATTRIBUTED** — the exact shape of the error above.
+  **MISATTRIBUTED** — the shape of the 2026-08-24 incident in `references/incidents.md`.
 - **2** — the scan did not run (zero trees enumerated). Nothing was checked; an empty answer is
   meaningless unless the search happened.
-
 
 
 ### The environment ladder — work it before reporting failure
@@ -227,7 +224,6 @@ answer:
 6. **Ask the user** — last, and only with receipts for 1–5.
 
 
-
 **How to report a genuine unavailability** — never the bare claim:
 
 > "Tried X in the sandbox → `<error>`. Via Desktop Commander → `<result>`. Chrome MCP can't help
@@ -236,7 +232,6 @@ answer:
 **The standard.** If the user can disprove your "unavailable" in thirty seconds by naming a path
 you didn't try, you didn't work the list. And note the asymmetry with a plain wrong answer: a
 false "it's broken" sends the user to fix something that isn't broken.
-
 
 
 ### The research check — a recommendation is a claim too
@@ -257,7 +252,6 @@ preference.** "No surveyed vendor does X" is a fact.
 **The tell:** any recommendation of the form "we should probably…" about behaviour in a domain
 where a competitor or market pass exists. Also: proposing to change something that currently
 matches a documented standard.
-
 
 
 ## Skill self-test
