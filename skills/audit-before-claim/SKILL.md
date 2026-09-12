@@ -26,6 +26,10 @@ This file carries the RULES ONLY, so the triggers are the first thing read rathe
 The incidents that earned each rule are in **`references/incidents.md`** — read it when you want
 to know why a rule exists, when you are about to argue one does not apply, or when you are adding
 one. Bad-vs-good pairs per claim type are in **`references/examples.md`**.
+⚠ **If your environment served this skill as a SINGLE FILE, those two files are not beside
+you** — the Cowork account store takes only `SKILL.md`. Read them on the Mac through Desktop
+Commander at `~/LimitlessStack/skills/audit-before-claim/references/`. A pointer you cannot
+resolve is worse than no pointer, so resolve it there rather than reasoning without it.
 
 ## 🛑 STOP — five claim shapes, five checks
 
