@@ -70,7 +70,13 @@ for skill_dir in "$SCRIPT_DIR/skills/"*/; do
   [ -f "$skill_dir/SKILL.md" ] || continue
   skill=$(basename "$skill_dir")
   mkdir -p "$SKILLS_DIR/$skill"
-  cp "$skill_dir/SKILL.md" "$SKILLS_DIR/$skill/SKILL.md"
+  # cp -R the WHOLE skill, not just SKILL.md. Until 2026-09-12 this copied one
+  # file, so a skill with references/ (progressive disclosure) installed with
+  # its pointers dangling — and karpathy-guidelines/EXAMPLES.md had never been
+  # installed at all since Apr 26 for exactly this reason. Same class as the
+  # preflight's */SKILL.md sync loop, fixed the same day: the mechanism built to
+  # propagate an asset could not see a new KIND of asset.
+  cp -R "$skill_dir". "$SKILLS_DIR/$skill"/
   echo "  ✓ $skill skill installed"
 done
 echo "  (limitless-stack = 7-tool protocol; notebooklm = full NotebookLM API;"
