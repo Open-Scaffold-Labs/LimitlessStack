@@ -151,6 +151,35 @@ if [ "$FILES_SEARCHED" -eq 0 ] || [ "$LINES_SEARCHED" -eq 0 ]; then
   exit 2
 fi
 
+# HISTORY FLOOR (added 2026-09-12). The corpus above can be non-empty and still
+# contain no HISTORY. wiki/log.md is where rulings are written; finding the
+# ruling that governs a subject is this tool's entire job. The floor above only
+# catches a TOTALLY empty corpus, so a skeleton clears it:
+#
+#   Run from the canonical LimitlessStack checkout — which has NO wiki/ at all —
+#   recall answered every query from two stray CLAUDE.md files (2 files, 255
+#   lines) and returned exit 1. Exit 1 reads as "searched, found nothing, try a
+#   better noun", so the answer looks like absent history rather than the wrong
+#   tree. A session working in openfirehouse-neris hit exactly this on
+#   2026-09-12, distrusted it, and had to say so by hand.
+#
+# Exit 2, deliberately: its documented meaning is "the search did not run", and
+# a zero drawn from a historyless vault means nothing at all. Keyed on the LOG
+# being readable, not on a line-count threshold — a genuinely new vault with an
+# empty log has a real (if short) history and must still answer.
+if [ ! -r "$LOG" ]; then
+  echo "recall: NO HISTORY IN THIS VAULT — wiki/log.md is absent." >&2
+  echo "        VAULT=$VAULT" >&2
+  echo "        $FILES_SEARCHED file(s) / $LINES_SEARCHED line(s) were readable, but none" >&2
+  echo "        of them is the log, and the rulings live in the log." >&2
+  echo "        The search did NOT run. This is exit 2, not 'no history' —" >&2
+  echo "        do NOT read a zero from this vault as 'never decided'." >&2
+  echo "        Run the copy inside the vault that HOLDS the history" >&2
+  echo "        (<hub-vault>/tools/recall.sh), not the canonical LimitlessStack" >&2
+  echo "        checkout, which ships the tool but carries no wiki/." >&2
+  exit 2
+fi
+
 echo "━━ recall: $PATTERN"
 echo "   searched $FILES_SEARCHED file(s) · $LINES_SEARCHED line(s)   [positive control]"
 echo ""

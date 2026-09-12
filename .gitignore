@@ -1,1 +1,7 @@
 tools/__pycache__/
+# recall.sh writes a usage counter beside itself, keyed on its own VAULT. Since
+# 2026-09-12 a run from THIS repo is refused outright (no wiki/log.md here, so
+# the history floor exits 2) — but the counter is written before that gate, so a
+# refused run still drops this file. The Hub vault has ignored it since it was
+# added; mirroring that decision rather than inventing a second one.
+tools/.recall-counter.tsv
