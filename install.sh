@@ -111,6 +111,15 @@ cp "$SCRIPT_DIR/tools/limitless-preflight.sh" "$TARGET/tools/limitless-preflight
 cp "$SCRIPT_DIR/tools/nightly-selfheal.sh"        "$TARGET/tools/nightly-selfheal.sh"
 cp "$SCRIPT_DIR/tools/trust-anchor-check.py"      "$TARGET/tools/trust-anchor-check.py"
 cp "$SCRIPT_DIR/tools/anti-pattern-candidates.py" "$TARGET/tools/anti-pattern-candidates.py"
+# Task-file rot detector. Added to install.sh 2026-09-12 — the tool shipped
+# 2026-08-24 and this script never deployed it, so limitless-preflight.sh
+# (which checks for it by path) printed a permanent "task-file rot is
+# unmonitored" warning in every scaffolded project, for a tool the canonical
+# had all along. The contract's own recurring gap once more: the mechanism
+# built to propagate an asset could not see this instance of it.
+# ⚠ 8 further canonical tools are still absent from this list, and nothing
+# measures install.sh against tools/ — see wiki/team-tasks.md.
+cp "$SCRIPT_DIR/tools/task-file-check.py"         "$TARGET/tools/task-file-check.py"
 # Shell-safety layer (added 2026-08-24, claude-anti-patterns #72). The `set -u`
 # unbound-variable class hit tools/limitless-preflight.sh TWICE, three months
 # apart, and the second time the abort exited with the code that means
@@ -155,7 +164,8 @@ cp "$SCRIPT_DIR/tools/com.openscaffold.nightly-selfheal.plist.template" \
 chmod +x "$TARGET/tools/session-bootstrap.sh" "$TARGET/tools/limitless-preflight.sh" \
          "$TARGET/tools/notebooklm-wiki-refresh.py" "$TARGET/tools/notebooklm-dedupe.py" \
          "$TARGET/tools/nightly-selfheal.sh" "$TARGET/tools/trust-anchor-check.py" \
-         "$TARGET/tools/anti-pattern-candidates.py" "$TARGET/tools/shell-unbound-check.py" \
+         "$TARGET/tools/anti-pattern-candidates.py" "$TARGET/tools/task-file-check.py" \
+         "$TARGET/tools/shell-unbound-check.py" \
          "$TARGET/tools/git-pre-commit.sh" "$TARGET/tools/install-git-hooks.sh" \
          "$TARGET/tools/test-preflight-abort.sh" \
          "$TARGET/tools/test-session-bootstrap.sh" "$TARGET/tools/test-recall-render.sh" \

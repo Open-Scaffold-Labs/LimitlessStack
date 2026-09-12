@@ -48,20 +48,58 @@ STALE_DAYS = 45          # an open item under a section older than this was neve
 
 OPEN_RE = re.compile(r'^\s*- \[ \] ')
 BOX_RE = re.compile(r'^\s*- \[[ xX]\] ')
-SEC_RE = re.compile(r'^### (.*)$')
+# A "section" is any `## ` topic banner or `### ` subsection inside Active,
+# excluding the Active/Archive banners themselves. Widened from `^### ` on
+# 2026-09-12, with the bounds fix: both live files head their TOPICS with
+# `## ` and use `### ` only sometimes, so a `### `-only pattern could not
+# reach 29% of team-tasks.md's open items and 43% of mlav1114.md's. Fixing
+# the bounds alone would have left a checker that measured 71%/57% of the
+# set and still reported clean — the shape of anti-pattern #68.
+SEC_RE = re.compile(r'^#{2,3} (?!Active\b|Archive\b)(.*)$')
 DATE_RE = re.compile(r'(\d{4}-\d{2}-\d{2})')
 
 
 def split_active(lines):
-    """Returns (start, end) of the Active section, or (None, None)."""
-    ia = ir = None
+    """Returns (start, end) of the Active region.
+
+    Active is a BANNER over `## `-level topic sections, closed by the
+    `## Archive` banner — NOT a container whose children are `### ` only.
+
+    Until 2026-09-12 this ended the region at the next `## ` heading that was
+    not `## Active`. Both live task files head their topics with `## `, so the
+    very next heading terminated it and Active measured TWO LINES: the banner
+    and a blank. Four of the five rules below ran over that empty set while
+    `✓ task files are current` printed green over 340 open items, and
+    `--prove` passed 6/6 the whole time because its fixtures were built in a
+    shape neither real file has. See wiki/log.md [2026-09-12] `audit |
+    audit-before-claim's references pointer RESOLVES from Cowork`.
+
+    Both bounds now fail SAFE: no `## Active` starts the region after the
+    frontmatter, no `## Archive` runs it to EOF. Over-scanning over-reports;
+    the old shape scanned nothing and reported clean, which is the failure
+    direction anti-pattern #38 names. Match `## Archive` by prefix only — an
+    earlier attempt keyed on an Archive|CLOSED pattern and cut the region at a
+    section TITLED "…is CLOSED…".
+    """
+    ia = None
     for i, l in enumerate(lines):
-        if ia is None and l.startswith("## Active"):
+        if l.startswith("## Active"):
             ia = i
-        elif ia is not None and l.startswith("## ") and not l.startswith("## Active"):
-            ir = i
             break
-    return ia, (ir if ir is not None else len(lines))
+    if ia is None:
+        # No Active banner — e.g. my-tasks/draaen-osl.md, which heads its list
+        # `## Open — pick up next session`. Start after the YAML frontmatter so
+        # the body is measured rather than silently skipped.
+        ia = 0
+        if lines and lines[0].strip() == "---":
+            for i, l in enumerate(lines[1:], start=1):
+                if l.strip() == "---":
+                    ia = i + 1
+                    break
+    for i in range(ia + 1, len(lines)):
+        if lines[i].startswith("## Archive"):
+            return ia, i
+    return ia, len(lines)
 
 
 def check_file(rel, today):
@@ -92,6 +130,20 @@ def check_file(rel, today):
         return out
     act = lines[ia:ir]
     kb = lambda xs: sum(len(x) + 1 for x in xs) / 1024
+
+    # ── SCOPE ────────────────────────────────────────────────────────────────
+    # Coverage floor, added 2026-09-12 with the bounds fix above. Every rule
+    # below this line sees only `act`, so "the region captured nothing" and
+    # "the file has nothing wrong" are indistinguishable from outside — which
+    # is precisely how a 2-line Active region printed green over 340 open
+    # items for months. The floor makes the vacuous case say so out loud.
+    # Same discipline the canonical-sync loops and the label fence already
+    # carry: a zero-item sweep and a zero-drift sweep must not look alike.
+    file_open = sum(1 for l in lines if OPEN_RE.match(l))
+    if file_open and not any(BOX_RE.match(l) for l in act):
+        out.append((rel, "SCOPE", f"the Active scan captured 0 checkboxes while the file holds "
+                                  f"{file_open} open item(s) — the section bounds are wrong, so "
+                                  f"every Active-scoped rule here is vacuous"))
 
     # ── NARRATIVE ────────────────────────────────────────────────────────────
     prose = [l for l in act if l.strip() and not BOX_RE.match(l)]
@@ -171,6 +223,9 @@ def prove():
         "CLOSED-SECTION": f"---\ntasks_audited: {today}\n---\n\n## Active\n\n### {today} done\n\n- [x] shipped\n\n### {today} live\n\n- [ ] open\n",
         "STALE": f"---\ntasks_audited: {today}\n---\n\n## Active\n\n### {old} ancient\n\n- [ ] never re-read since then\n",
         "DUPLICATE": f"---\ntasks_audited: {today}\n---\n\n## Active\n\n### {today} x\n\n- [ ] the very same wording repeated here\n- [ ] the very same wording repeated here\n",
+        # Active legitimately empty while open items sit below the Archive
+        # banner: every rule below SCOPE is vacuous and must say so.
+        "SCOPE": f"---\ntasks_audited: {today}\n---\n\n## Active\n\n## Archive — shipped\n\n- [ ] an open item parked below the Archive banner\n",
     }
     ok = True
     print("\nproving each rule fires on a planted fault\n")
@@ -185,6 +240,33 @@ def prove():
         hit = rule in got
         ok &= hit
         print(f"  {'✓' if hit else '✗'} {rule:16s} fired={hit}   (also saw: {sorted(got - {rule}) or 'nothing'})")
+
+    # ── BOUNDS regression (added 2026-09-12) ─────────────────────────────────
+    # Built in the REAL files' shape, which is the whole point: `## Active` is
+    # a BANNER over dated `## ` topic sections that carry items directly,
+    # closed by `## Archive`. Every other fixture above is authored in a shape
+    # the live files do NOT have — which is exactly how 6/6 green coexisted
+    # with a checker measuring an empty set.
+    #
+    # This one assertion fences BOTH of the day's fixes, and fails if either
+    # regresses: restore the old bounds and Active collapses to 2 lines;
+    # restore `SEC_RE = ^### ` and the `## ` banner stops being a section, so
+    # its date never loads and the item is never aged. Either way STALE goes
+    # silent and this goes red.
+    with tempfile.TemporaryDirectory() as d:
+        f = Path(d) / "t.md"
+        f.write_text(f"---\ntasks_audited: {today}\n---\n\n## Active\n\n"
+                     f"## Topic {old} — a `## ` banner carrying items directly\n\n"
+                     f"- [ ] an open item neither the old bounds nor `^### ` could reach\n\n"
+                     f"## Archive — shipped\n")
+        keep, VAULT = VAULT, Path(d)
+        got = {r for _, r, _ in check_file("t.md", today)}
+        VAULT = keep
+    hit = "STALE" in got and "SCOPE" not in got
+    ok &= hit
+    print(f"  {'✓' if hit else '✗'} BOUNDS           Active spans `## ` topic sections "
+          f"(STALE fired={'STALE' in got}, SCOPE quiet={'SCOPE' not in got})")
+
     # negative control: a healthy file must produce NOTHING
     with tempfile.TemporaryDirectory() as d:
         f = Path(d) / "t.md"
