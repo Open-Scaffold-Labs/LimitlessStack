@@ -56,7 +56,25 @@ BOX_RE = re.compile(r'^\s*- \[[ xX]\] ')
 # the bounds alone would have left a checker that measured 71%/57% of the
 # set and still reported clean — the shape of anti-pattern #68.
 SEC_RE = re.compile(r'^#{2,3} (?!Active\b|Archive\b)(.*)$')
-DATE_RE = re.compile(r'(\d{4}-\d{2}-\d{2})')
+DATE_RE = re.compile(r'(\d{4}-\d{2}(?:-\d{2})?)')
+
+
+def sec_date(title):
+    """The date a section is aged against, or None when it carries none.
+
+    Accepts `YYYY-MM` as well as `YYYY-MM-DD`, widened 2026-09-12. The strict
+    form silently skipped `## 2026-06 — OpenFirehouse (open)` — a section three
+    months old holding 3 open items — because a PARTIAL date read as NO date.
+    Found by refusing to accept 92% STALE coverage as good enough.
+    """
+    m = DATE_RE.search(title)
+    if not m:
+        return None
+    s = m.group(1)
+    try:
+        return datetime.date.fromisoformat(s if len(s) == 10 else s + "-01")
+    except ValueError:
+        return None
 
 
 def split_active(lines):
@@ -169,17 +187,41 @@ def check_file(rel, today):
                                            f"— move to Archive (first: {closed[0]})"))
 
     # ── STALE ────────────────────────────────────────────────────────────────
-    stale = 0
+    # Fires on EITHER half, because an item nothing could age is not an item
+    # that passed. Before 2026-09-12 an open item under an undated section was
+    # skipped in silence — 29 of them across the two live files, 20 of those in
+    # "Yours to decide" / "FOR MATT" buckets. Same reason SCOPE exists above:
+    # "found nothing" and "measured nothing" must never look alike, and the
+    # coverage question does not stop being real one level down.
+    stale = unaged = 0
     cur_date = None
     for l in act:
         if (sm := SEC_RE.match(l)):
-            d = DATE_RE.search(sm.group(1))
-            cur_date = datetime.date.fromisoformat(d.group(1)) if d else None
-        elif OPEN_RE.match(l) and cur_date and (today - cur_date).days > STALE_DAYS:
-            stale += 1
-    if stale:
-        out.append((rel, "STALE", f"{stale} open item(s) under sections older than {STALE_DAYS}d "
-                                  f"— never re-verified against the code"))
+            cur_date = sec_date(sm.group(1))
+        elif OPEN_RE.match(l):
+            if cur_date is None:
+                unaged += 1
+            elif (today - cur_date).days > STALE_DAYS:
+                stale += 1
+    if stale or unaged:
+        bits = []
+        if stale:
+            # ⚠ The wording is load-bearing and was sharpened 2026-09-12 (Matt:
+            # "just because a task is pending a long time doesn't mean it's
+            # necessarily done"). AGE IS NOT EVIDENCE OF COMPLETION. A long-open
+            # item is equally likely to be real work nobody has looked at, and
+            # the remediation line this finding prints beside ("tick what you
+            # shipped, archive closed sections") biases toward closing. The
+            # finding must therefore carry its own guard: this rule asks you to
+            # LOOK, it never licenses a tick.
+            bits.append(f"{stale} open item(s) under sections older than {STALE_DAYS}d — nobody "
+                        f"has re-read them. AGE IS NOT EVIDENCE THEY ARE DONE: re-verify each "
+                        f"against the code and search for a ruling before ticking or archiving; "
+                        f"a long-ignored item that is still genuinely owed is the expected case")
+        if unaged:
+            bits.append(f"{unaged} open item(s) under a section carrying NO date, so they cannot "
+                        f"be aged at all — date the section or move the items")
+        out.append((rel, "STALE", "; ".join(bits)))
 
     # ── DUPLICATE ────────────────────────────────────────────────────────────
     seen = {}
@@ -260,12 +302,54 @@ def prove():
                      f"- [ ] an open item neither the old bounds nor `^### ` could reach\n\n"
                      f"## Archive — shipped\n")
         keep, VAULT = VAULT, Path(d)
-        got = {r for _, r, _ in check_file("t.md", today)}
+        msgs = {r: m for _, r, m in check_file("t.md", today)}
         VAULT = keep
-    hit = "STALE" in got and "SCOPE" not in got
+    # Assert on the AGED half specifically, not merely that STALE fired. When
+    # STALE gained its unaged half on 2026-09-12 a bare `"STALE" in got` stopped
+    # distinguishing "aged it correctly" from "could not age it at all", and
+    # reverting SEC_RE quietly stopped turning this red. A fence that survives
+    # the mutation it exists to catch is #71.
+    hit = "older than" in msgs.get("STALE", "") and "SCOPE" not in msgs
     ok &= hit
-    print(f"  {'✓' if hit else '✗'} BOUNDS           Active spans `## ` topic sections "
-          f"(STALE fired={'STALE' in got}, SCOPE quiet={'SCOPE' not in got})")
+    print(f"  {'✓' if hit else '✗'} BOUNDS           Active spans `## ` topic sections, item AGED "
+          f"(SCOPE quiet={'SCOPE' not in msgs})")
+
+    # ── DATE-GRAIN + UNAGED regressions (added 2026-09-12) ───────────────────
+    # Two halves of one lesson, both found by refusing to accept a 92% coverage
+    # figure: a PARTIAL date is not NO date, and an item nothing can age must be
+    # REPORTED rather than skipped. Assert on the message text, not just the
+    # rule name — STALE now has two halves and either can go silent alone.
+    for label, body, want in (
+        ("PARTIAL-DATE",
+         f"## {old[:7]} — a section dated YYYY-MM, as team-tasks.md writes some\n\n"
+         f"- [ ] an open item that a YYYY-MM-DD-only pattern read as undated\n",
+         "older than"),
+        ("UNAGED",
+         "### a section heading carrying no date anywhere in it\n\n"
+         "- [ ] an open item that nothing can age\n",
+         "cannot be aged"),
+        # Fences the GUARD, not just the count. STALE prints beside a
+        # remediation line that says "tick what you shipped, archive closed
+        # sections" — closure-biased — so the finding has to carry its own
+        # "age is not evidence" warning or a hurried session reads the pair as
+        # permission to tick. If someone rewords that guard away, this goes red
+        # and they have to do it on purpose.
+        ("NOT-EVIDENCE",
+         f"## {old} — an old section holding work that is still genuinely owed\n\n"
+         f"- [ ] real work nobody has looked at in months — NOT done\n",
+         "AGE IS NOT EVIDENCE"),
+    ):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "t.md"
+            f.write_text(f"---\ntasks_audited: {today}\n---\n\n## Active\n\n"
+                         + body + "\n## Archive — shipped\n")
+            keep, VAULT = VAULT, Path(d)
+            msgs = {r: m for _, r, m in check_file("t.md", today)}
+            VAULT = keep
+        hit = want in msgs.get("STALE", "")
+        ok &= hit
+        print(f"  {'✓' if hit else '✗'} {label:16s} STALE reports it "
+              f"(wanted {want!r}, got {msgs.get('STALE', 'NO STALE FINDING')[:52]!r})")
 
     # negative control: a healthy file must produce NOTHING
     with tempfile.TemporaryDirectory() as d:
