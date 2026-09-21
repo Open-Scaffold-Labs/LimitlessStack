@@ -116,6 +116,19 @@ TRIPWIRES = [
      "A count settles what the SCHEMA holds, never what the product is FOR — the DB is pre-launch "
      "seed data. It passes every verification check because the NUMBER is true; the inference is "
      "what is wrong. Write the sentence it implies about real users and check you have evidence for THAT."),
+    ('writing a fallback — `x || \'SomeName\'`, `?? <a literal>`, `list.find(..) || list[0]`, a default that is a real member of the set',
+     ["78", "38"],
+     "If the fallback would be BELIEVED on a screen, it is a fabrication with a UI. An unresolved "
+     "value renders as unresolved — blank, 'not set', an honest empty state — never the browser's, "
+     "the demo's, the first entry's or the last row's. A default is legitimate only when a person "
+     "CHOSE it and can be named. The fallback branch is the one no test exercises."),
+    ('about to commit a shared file, claim a migration number, or act on HEAD / a suite count / a file another lane may hold',
+     ["79", "62", "14"],
+     "Re-derive a shared counter at CLAIM time, two ways where two exist. Before committing a shared "
+     "file run `git diff <that file>` and read WHOSE hunks are in it. `git add`+bare commit publishes "
+     "another lane's STAGED work; `git commit -- <path>` publishes their UNSTAGED work in that file — "
+     "each safeguard is blind to the other's case. Never point a read-modify-write script at a path "
+     "you have not just confirmed is clean and yours."),
 ]
 
 # §1 — SITUATION -> entries. Every non-exempt heading must appear at least once.
@@ -190,6 +203,10 @@ SITUATIONS = [
      ["11", "22", "33", "43"]),
     ("measure a database and reason from the number",
      ["77", "29", "40", "68", "18"]),
+    ("write a default, a fallback, or an empty state for a value that may not resolve",
+     ["78", "38", "46", "70"]),
+    ("work in a tree, database or numbering scheme another lane is also writing",
+     ["79", "62", "14", "22", "7"]),
 ]
 # ------------------------------------------------------------ /CURATED ------
 
