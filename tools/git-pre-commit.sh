@@ -22,7 +22,8 @@ set -u
 ROOT="$(git rev-parse --show-toplevel)"
 TOOLS="$ROOT/tools"
 FAIL=0
-TMP="$(mktemp -d -t precommit)"
+# Portable template: `mktemp -t name` is BSD-only; GNU mktemp rejects it ("too few X's").
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/precommit.XXXXXX")" || exit 1
 trap 'rm -rf "$TMP"' EXIT
 
 # Staged files (Added/Copied/Modified/Renamed — never Deleted).
@@ -37,6 +38,36 @@ trap 'rm -rf "$TMP"' EXIT
 STAGED="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.sh$' || true)"
 STAGED_ANY="$(git diff --cached --name-only --diff-filter=ACMR \
               | grep -E '^tools/.*\.(sh|py)$' || true)"
+# ── Authorship (added 2026-09-23) ───────────────────────
+# In a SHARED vault (one with .authors.json at its root) nobody changes what someone
+# else wrote: adding is free; changing or removing another person's lines, or writing
+# into their members/<login>/ or wiki/my-tasks/<login>.md, is refused with the exact
+# command to send them a suggestion instead. Personal vaults have no .authors.json
+# and are untouched. It runs BEFORE the early exit below on purpose: most commits
+# stage no tools/ file, and a check placed after that exit never sees them (#61).
+if [ -f "$ROOT/.authors.json" ] && [ -f "$TOOLS/authorship-guard.py" ]; then
+  # Runs on EVERY commit in a shared vault, so it must not depend on python3.11 the way
+  # the tools/-only checks below do: the guard is stdlib-only and any python3 runs it.
+  GUARD_PY="$(command -v python3.11 || command -v python3 || true)"
+  if [ -z "$GUARD_PY" ]; then
+    echo "  COMMIT BLOCKED: this shared vault checks authorship on every commit and needs python3."
+    exit 1
+  fi
+  "$GUARD_PY" "$TOOLS/authorship-guard.py" --staged
+  guard_rc=$?
+  if [ "$guard_rc" -ne 0 ]; then
+    echo ""
+    if [ "$guard_rc" -eq 1 ]; then
+      echo "  COMMIT BLOCKED by the authorship rule above. Commit your own changes"
+      echo "  separately, and send the owner a suggestion for theirs."
+    else
+      echo "  COMMIT BLOCKED: the authorship check could not run (message above)."
+    fi
+    echo ""
+    exit 1
+  fi
+fi
+
 [ -z "$STAGED" ] && [ -z "$STAGED_ANY" ] && exit 0
 
 if [ -n "$STAGED" ]; then

@@ -5,3 +5,7 @@ tools/__pycache__/
 # refused run still drops this file. The Hub vault has ignored it since it was
 # added; mirroring that decision rather than inventing a second one.
 tools/.recall-counter.tsv
+# NotebookLM refresh state is per-vault (it records one person's notebook IDs and
+# source IDs). A refresh run from this repo drops one here; it must never be
+# published from the public canonical.
+tools/.notebooklm-*-state.json

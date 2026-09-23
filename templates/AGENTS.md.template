@@ -1,0 +1,11 @@
+# AGENTS.md — for any coding agent working in this folder
+
+**Read `CLAUDE.md` in full before doing anything, and follow it.** It is this folder's operating
+manual for every coding agent — not only Claude. Where it says "Claude", it means you.
+
+- **First action, every session:** run Roll Call — `bash tools/limitless-preflight.sh`
+  (exit 0 = READY · 1 = WARN, report it · 2 = BLOCK, stop), then the rest of the
+  mandatory first action in `CLAUDE.md`.
+- **End of every session:** the end-of-session checklist in `CLAUDE.md`.
+- Claude loads the Limitless Stack skills automatically (`~/.claude/skills/`). If your agent
+  does not use skills, every step you need is written out in `CLAUDE.md` and `tools/`.

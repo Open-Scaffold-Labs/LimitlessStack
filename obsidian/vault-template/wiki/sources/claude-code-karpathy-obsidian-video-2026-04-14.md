@@ -13,7 +13,7 @@ notebooklm_source_id: 5e06a5c3-d1d6-45cc-8226-64f44aaa7aac
 
 # Source: "Claude Code + Karpathy's Obsidian = New Meta" (video)
 
-Jack Roberts' walkthrough of a four-tool LLM memory system built around Karpathy's [[concepts/llm-wiki-pattern|LLM Wiki pattern]]. The framing Matt wants us to apply to [[entities/openscaffold|OpenScaffold]].
+Jack Roberts' walkthrough of a four-tool LLM memory system built around Karpathy's [[concepts/llm-wiki-pattern|LLM Wiki pattern]]. The framing this vault applies to its own domain.
 
 ## Key framing — "four tools, four jobs"
 
@@ -54,5 +54,4 @@ The Obsidian-only system breaks past ~10,000 files: token costs balloon, session
 ## Pages touched / created
 
 - [[concepts/llm-wiki-pattern]] *(new concept page)*
-- [[synthesis/memory-architecture]] *(new — OpenScaffold-specific application of the four-tool model)*
 - Informs future updates to [[CLAUDE.md|the schema]] in this vault.

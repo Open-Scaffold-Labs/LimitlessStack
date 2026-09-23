@@ -3,7 +3,7 @@
 Semantic search over the OpenScaffold Pinecone index.
 
 Three namespaces are available:
-    repos     source code + docs from raw/openscaffold-repos/*
+    repos     source code + docs from the manifest's repos_dir
     wiki      curated wiki pages (wiki/**/*.md + CLAUDE.md, README.md)
     uploads   attachments from raw/uploads/**
 
@@ -17,8 +17,36 @@ Usage:
 """
 import argparse
 import subprocess
+import sys
+from pathlib import Path
 
-INDEX_NAME = "openscaffold"
+VAULT = Path(__file__).resolve().parent.parent
+def _manifest_pinecone(vault: Path) -> dict:
+    """YOUR Pinecone settings: the PINECONE block of this vault's .limitless-project.py.
+    Nothing is assumed — no manifest or no index name means the tool stops and says so."""
+    mp = vault / ".limitless-project.py"
+    if not mp.exists():
+        return {}
+    try:
+        import importlib.util  # same loader as notebooklm-wiki-refresh.py, so __file__ etc. are set
+        spec = importlib.util.spec_from_file_location("_lsm_pinecone", mp)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return dict(getattr(m, "PINECONE", None) or {})
+    except Exception as e:  # a broken manifest must be visible, not silently defaulted
+        print(f"WARNING: could not read {mp}: {e}", file=sys.stderr)
+        return {}
+
+
+def _require_index(name) -> str:
+    if not name:
+        sys.exit("No Pinecone index configured. Create YOUR index in your Pinecone account, then add\n"
+                 "  PINECONE = {\"index\": \"<your-index-name>\"}\n"
+                 "to .limitless-project.py at the root of this vault.")
+    return name
+
+
+INDEX_NAME = _manifest_pinecone(VAULT).get("index")  # checked before first use
 ALL_NAMESPACES = ("repos", "wiki", "uploads")
 
 
@@ -81,7 +109,7 @@ def main():
 
     from pinecone import Pinecone
     pc = Pinecone(api_key=get_api_key())
-    index = pc.Index(INDEX_NAME)
+    index = pc.Index(_require_index(INDEX_NAME))
 
     if args.namespace == "all":
         namespaces = ALL_NAMESPACES

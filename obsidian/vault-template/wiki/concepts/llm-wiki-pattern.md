@@ -40,12 +40,12 @@ Original pattern from **Andrej Karpathy** (writer, ex-OpenAI/Tesla). The human c
 
 ## Scaling wall
 
-Obsidian-only breaks at ~10,000 files. Token costs, session latency, and graph readability all collapse past that threshold. See [[synthesis/memory-architecture]] for the four-tool answer (Obsidian + NotebookLM + Pinecone + `CLAUDE.md`).
+Obsidian-only breaks at ~10,000 files. Token costs, session latency, and graph readability all collapse past that threshold. The Limitless Stack's answer is four memory tools (Obsidian + NotebookLM + Pinecone + `CLAUDE.md`).
 
 ## Relationships
 
 - Implemented by this vault
-- Extended in [[synthesis/memory-architecture]] — applies the pattern to [[entities/openscaffold|OpenScaffold]]
+- Applied in this vault — see [[overview]] and CLAUDE.md.
 - Original source: [[sources/claude-code-karpathy-obsidian-video-2026-04-14]]
 
 ## Sources

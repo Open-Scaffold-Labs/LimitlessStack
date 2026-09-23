@@ -1,0 +1,99 @@
+# Authorship safety net — the backstop behind the commit check (tools/authorship-guard.py).
+#
+# The rule: anyone may ADD to this shared vault; only a line's author may change or remove
+# it; members/<login>/ and wiki/my-tasks/<login>.md belong to that person. The commit check
+# enforces this on every commit made with the stack's tools. This job catches anything that
+# skipped it (e.g. `git commit --no-verify`, or an edit made outside the stack) and opens an
+# issue assigned to the person whose writing was changed, so THEY decide: close it to accept
+# the change, or restore their text.
+#
+# Nightly on purpose, not per push: the org already pays for Actions minutes, and the commit
+# check stops normal commits, so next-morning notice costs ~30 runs/month instead of ~400.
+# "Run workflow" (manual) also runs the guard's own test suite and proves this job can open
+# and close an issue.
+name: Authorship safety net
+
+on:
+  schedule:
+    - cron: "30 8 * * *"      # 08:30 UTC — after the night's sessions, before the morning briefs
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "How many hours of commits to check"
+        default: "26"
+      selftest:
+        description: "Also run the guard's tests and prove issue creation works"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Guard self-test (manual runs)
+        if: github.event_name == 'workflow_dispatch' && inputs.selftest
+        run: bash tools/test-authorship-guard.sh
+
+      - name: Check recent commits
+        id: check
+        env:
+          HOURS: ${{ inputs.hours || '26' }}
+        run: |
+          OLDEST="$(git rev-list --reverse --since="${HOURS} hours ago" HEAD | head -1)"
+          if [ -z "$OLDEST" ]; then echo "[]" > violations.json; echo "no commits in the window"; exit 0; fi
+          if git rev-parse -q --verify "${OLDEST}^" >/dev/null; then RANGE="${OLDEST}^..HEAD"; else RANGE="HEAD"; fi
+          set +e
+          python tools/authorship-guard.py --range "$RANGE" --json > violations.json
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::error::authorship-guard could not run — see the log above"; exit 1
+          fi
+          echo "checked commits since ${OLDEST:0:10}: $(python -c 'import json;print(len(json.load(open("violations.json"))))') finding(s)"
+
+      - name: Tell each owner
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const findings = JSON.parse(fs.readFileSync('violations.json', 'utf8'));
+            const people = Object.keys(JSON.parse(fs.readFileSync('.authors.json', 'utf8')).people || {});
+            const byOwner = {};
+            for (const f of findings) (byOwner[f.owner] ||= []).push(f);
+            for (const [owner, list] of Object.entries(byOwner)) {
+              const shas = [...new Set(list.map(f => f.commit.slice(0, 10)))];
+              const title = `[Authorship] ${shas.join(', ')} changed writing by ${owner}`;
+              const open = await github.paginate(github.rest.issues.listForRepo,
+                { owner: context.repo.owner, repo: context.repo.repo, state: 'all', per_page: 100 });
+              if (open.some(i => i.title === title)) { core.info(`already reported: ${title}`); continue; }
+              const rows = list.map(f => `- \`${f.commit.slice(0, 10)}\` by **${f.actor}** — \`${f.path}\` — ${f.why}` +
+                (Array.isArray(f.lines) ? ` (lines ${f.lines.slice(0, 12).join(', ')})` : '')).join('\n');
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo, title,
+                assignees: people.includes(owner) ? [owner] : [],
+                body: `These commits changed writing that belongs to **${owner}** without going through the commit check:\n\n${rows}\n\n` +
+                      `**${owner}**, you decide: close this issue to accept the change, or restore your text (your agent can do it: ` +
+                      `\"restore my lines changed in ${shas.join(', ')}\").\n\n_Opened by the nightly authorship safety net._`,
+              });
+              core.info(`opened: ${title}`);
+            }
+            if ('${{ github.event_name }}' === 'workflow_dispatch' && '${{ inputs.selftest }}' === 'true') {
+              const t = await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo,
+                title: '[Selftest] authorship safety net can open issues', body: 'Opened and closed by a manual self-test run. No action needed.' });
+              await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: t.data.number, state: 'closed' });
+              core.info(`self-test issue #${t.data.number} opened and closed`);
+            }

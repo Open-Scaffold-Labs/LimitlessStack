@@ -22,9 +22,9 @@ Reading the prose rules in CLAUDE.md relies on Claude's discipline. Roll Call re
 
 Roll Call runs `tools/limitless-preflight.sh` from **whichever vault is currently open** — the preflight is per-project, not global. Each project's preflight reads `.limitless-project.py` (the project manifest) at the vault root to determine which checks apply and what notebook IDs / Pinecone index / sync paths to use.
 
-For the Hub vault (`/Users/matthewlavin/Claude code antigravity/obsidian`), check #5 specifics are: `notebooklm auth check --test` passes; `cdaa7a43` mirror fresh; `ab4b7ccb` reminder sources newer than the files they mirror. **Other projects (the-match, future verticals) will have their own notebook IDs declared in their manifests** — read each project's `.limitless-project.py` before assuming the Hub IDs apply.
+Check #5 specifics come from that vault's manifest: `notebooklm auth check --test` passes; the default wiki notebook (`NOTEBOOKLM["default"]`) is fresh; the reminder notebook's (`NOTEBOOKLM["reminder"]`) sources are newer than the files they mirror. **Every vault declares its own notebook IDs** — read the open vault's `.limitless-project.py`; never assume another vault's IDs apply.
 
-To scaffold a new project that participates in Roll Call: run `/Users/matthewlavin/LimitlessStack/bin/limitless-stack-init <project_id> <target_path>`. That installs tools/, wiki/, CLAUDE.md, and a manifest skeleton.
+To scaffold a new project that participates in Roll Call: run `$LIMITLESS_STACK_HOME/bin/limitless-stack-init <project_id> <target_path>` (default `~/LimitlessStack`). That installs tools/, wiki/, CLAUDE.md, and a manifest skeleton.
 
 ## What Roll Call does
 
@@ -50,7 +50,7 @@ Exit codes:
 
 ```
 mcp__desktop-commander__start_process(
-  command="bash '/Users/matthewlavin/Claude code antigravity/obsidian /tools/limitless-preflight.sh'",
+  command="bash '<absolute path of the vault open in this session>/tools/limitless-preflight.sh'",
   shell="zsh",
   timeout_ms=90000
 )

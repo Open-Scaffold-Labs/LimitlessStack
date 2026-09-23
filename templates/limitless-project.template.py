@@ -6,7 +6,7 @@ The preflight script (tools/limitless-preflight.sh) and the refresh script
 (tools/notebooklm-wiki-refresh.py) read configuration from here.
 
 To re-create this manifest from scratch:
-    /Users/matthewlavin/LimitlessStack/bin/limitless-stack-init <project_id> <target>
+    ~/LimitlessStack/bin/limitless-stack-init <project_id> <target>
 
 Schema:
   PROJECT_ID    — kebab-case unique identifier (REQUIRED)
@@ -26,7 +26,16 @@ DESCRIPTION = "__DESCRIPTION__"
 
 # Optional checks. Mandatory checks (claude_md, obsidian, notebooklm,
 # sync_check, anti_patterns) always run regardless.
+# Add "pinecone" once YOUR Pinecone index exists and YOUR key is in the Keychain.
 CHECKS = []
+
+# YOUR Pinecone index (create it in your own Pinecone account — see the onboarding guide).
+# tools/pinecone-sync.py and tools/pinecone-search.py read the index name from here.
+PINECONE = {
+    "index": "__PROJECT_ID__",
+    "repos_dir": "raw/repos",
+    "state_file": "tools/.pinecone-sync-state.json",
+}
 
 OBSIDIAN = {
     "wiki_dir": "wiki",
@@ -70,5 +79,7 @@ NOTEBOOKLM = {
 }
 
 SYNC_CHECK = {
-    "limitless_stack_home": "/Users/matthewlavin/LimitlessStack",
+    # Informational only: the tools locate the canonical via $LIMITLESS_STACK_HOME
+    # (default ~/LimitlessStack). Set that variable if you cloned it elsewhere.
+    "limitless_stack_home": "~/LimitlessStack",
 }

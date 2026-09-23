@@ -5,7 +5,7 @@ This document describes how to configure the self-healing pipeline for this appl
 ## Prerequisites
 
 - Application deployed on Vercel with Supabase backend
-- GitHub repository under Open-Scaffold-Labs org
+- A GitHub repository you own (or have admin rights on)
 - CLAUDE.md at repository root describing app conventions
 
 ## Environment Variables (Vercel)
@@ -14,7 +14,7 @@ This document describes how to configure the self-healing pipeline for this appl
 |---|---|
 | `ANTHROPIC_API_KEY` | Claude API key for diagnostic pass |
 | `GITHUB_TOKEN` | Fine-grained PAT scoped to this repo (contents:write, metadata:read) |
-| `GITHUB_REPO` | `owner/repo` format (e.g. `Open-Scaffold-Labs/OpenRestaurant`) |
+| `GITHUB_REPO` | `owner/repo` format (e.g. `your-org/your-app`) |
 | `SELF_HEAL_CALLBACK_TOKEN` | Shared secret for webhook auth (generate with `openssl rand -hex 32`) |
 | `SELF_HEAL_ENABLED` | Set to `true` to enable the self-heal dispatch button |
 

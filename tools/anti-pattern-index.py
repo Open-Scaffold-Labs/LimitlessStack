@@ -329,6 +329,23 @@ def splice(text, block):
     return text.replace(anchor, "\n" + block + "\n" + anchor, 1)
 
 
+def _index_enabled() -> bool:
+    """The generated index is OPT-IN per vault: its SITUATIONS/TRIPWIRES tables describe one
+    vault's own ledger, so a vault that has not switched it on is not checked against them."""
+    mp = os.path.join(VAULT, ".limitless-project.py")
+    if not os.path.exists(mp):
+        return False
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_lsm_api", mp)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return bool(getattr(m, "ANTI_PATTERN_INDEX", False))
+    except Exception as e:  # a broken manifest must be visible, not read as "off"
+        sys.stderr.write(f"anti-pattern-index: could not read {mp}: {e}\n")
+        return True
+
+
 def main():
     text = read_page()
     heads = headings(text)
@@ -345,6 +362,10 @@ def main():
         return 1 if problems else 0
 
     if "--check" in sys.argv:
+        if not _index_enabled():
+            print("not enabled for this vault — optional; set ANTI_PATTERN_INDEX = True in "
+                  ".limitless-project.py and fill SITUATIONS/TRIPWIRES with YOUR entries to use it")
+            return 0
         for p in problems:
             print(p)
         current = ""

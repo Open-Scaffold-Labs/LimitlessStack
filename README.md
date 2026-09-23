@@ -2,7 +2,7 @@
 
 Seven tools, one operating system for running Open Scaffold Labs.
 
-> **New here?** Read **[`Limitless-Stack-Onboarding.pdf`](Limitless-Stack-Onboarding.pdf)** — single self-contained doc walking you from clone to running stack. Designed to be pasted into your Claude session as the onboarding context.
+> **New here?** Read **[`Limitless-Stack-Onboarding.pdf`](Limitless-Stack-Onboarding.pdf)** — how to build **your own** stack (your vault, your notebooks, your index, your rules), step by step with a check after each step. Hand it to your Claude and it walks you through.
 
 Vertical SaaS has a scaling problem: every new market means new code, new bugs, new maintenance — and eventually more engineers than the business can support. The Limitless Stack is designed to break that constraint. It's an AI-powered operating protocol that lets a small team build, diagnose, and maintain applications across verticals without scaling headcount linearly. Self-healing pipelines handle bug repair autonomously. A shared knowledge base compounds every fix and architectural decision across the entire portfolio. Semantic memory surfaces patterns that no single engineer would catch.
 
@@ -15,23 +15,24 @@ The market opportunity is real — 36.2 million US small businesses across secto
 | **Obsidian** | Structured knowledge base — wiki, cross-app patterns, rollout tracking |
 | **NotebookLM** | Research desk — deep dives across curated sources |
 | **Pinecone** | Semantic memory — full-text recall across all repos |
-| **Hub Workspace** | Multi-model agent runtime — Gemini default, Claude opt-in |
-| **Paperclip** | Coordination — org chart, budgets, tickets, approvals |
+| **Hub Workspace** | Shared agent workspace for teams (optional) |
+| **Paperclip** | Coordination — org chart, budgets, tickets, approvals (optional) |
 ## Install
 
-**Option A: Claude Code Plugin (recommended)**
-
-```
-/plugin marketplace add Open-Scaffold-Labs/LimitlessStack
-/plugin install limitless-stack@limitless-stack
-```
-
-**Option B: Manual**
+Build your own stack in this order (the onboarding PDF has the full steps and a check for each):
 
 ```bash
-git clone https://github.com/Open-Scaffold-Labs/LimitlessStack.git
-cp -r LimitlessStack/skill/. ~/.claude/skills/limitless-stack/
+git clone https://github.com/Open-Scaffold-Labs/LimitlessStack.git ~/LimitlessStack
+~/LimitlessStack/bin/limitless-stack-init <project-id> <vault-path> --description "<your domain>"
+~/LimitlessStack/install.sh <vault-path>
 ```
+
+`limitless-stack-init` creates your vault, your CLAUDE.md and your manifest (`.limitless-project.py`,
+which names YOUR notebooks and index). `install.sh` installs the skills, the tools and the Python
+packages. Then create your NotebookLM notebooks and run Roll Call — PDF steps 4–8.
+
+**Skills only:** `/plugin marketplace add Open-Scaffold-Labs/LimitlessStack` then
+`/plugin install limitless-stack@limitless-stack` in Claude Code.
 
 ## What's in the repo
 
@@ -41,6 +42,8 @@ cp -r LimitlessStack/skill/. ~/.claude/skills/limitless-stack/
 - **`skills/notebooklm/`** — The full NotebookLM API skill (bundled from notebooklm-py). Create notebooks, add sources, generate artifacts, download results.
 - **`skills/roll-call/`** — Session-start preflight skill. Mechanically verifies all seven tools are present, authenticated, and in sync before substantive work starts. Returns READY / WARN / BLOCK.
 - **`skills/audit-before-claim/`** — Verify-then-state. No factual claim without evidence citable from this session; `tools/recall.sh <subject noun>` before asserting broken/missing/never-decided; and no "X is unavailable" without having worked the environment list. Absorbed the former `four-tool-lookup` and `verify-before-claim` skills on 2026-08-24 — both were correct and neither was ever invoked (2 and 0 lifetime, against this skill's 47). One lever that gets pulled beats three that don't.
+- **`skills/impeccable/`** — Frontend design: shape, critique, audit and polish interfaces.
+- **`skills/of-module-hardening/`** — A hardening checklist written for one specific app codebase; it only triggers there.
 - **`skills/karpathy-guidelines/`** — Behavioral guidelines to reduce common LLM coding mistakes (Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven Execution). Mirror of [forrestchang/andrej-karpathy-skills](https://github.com/forrestchang/andrej-karpathy-skills) (MIT) — vendored so the discipline ships with the protocol.
 
 ### Operational tools (`tools/` — copied into your vault by `install.sh`)
@@ -49,19 +52,20 @@ cp -r LimitlessStack/skill/. ~/.claude/skills/limitless-stack/
 - **`session-bootstrap.sh`** — current-thesis snapshot at session start.
 - **`notebooklm-wiki-refresh.py`** — routes wiki files into per-project + default + reminder NotebookLM buckets, uploads, and **verifies content actually landed**.
 - **`notebooklm-dedupe.py`** — sweep any bucket for duplicate sources (uses cmd_replace correctly; the original wiki-refresh had a ghost-duplicate bug for two weeks before this was added).
-- **`pinecone-sync.py`** — chunks the corpus, upserts into the `openscaffold` index, supports `--changed-only`, `--dry-run`, `--repo NAME`. Rate-limit aware.
+- **`pinecone-sync.py`** — chunks the corpus, upserts into the index named in your `.limitless-project.py`, supports `--changed-only`, `--dry-run`, `--repo NAME`. Rate-limit aware.
 - **`pinecone-search.py`** — semantic search across the index with optional `--repo` filter.
 
 ### Docs and templates
 
 - **`claude-md/`** — CLAUDE.md templates for vaults and repos, including self-healing trust anchor configuration.
-- **`obsidian/vault-template/`** — Vault skeleton with wiki structure ready to go. Includes a starter `wiki/synthesis/claude-anti-patterns.md` (institutional memory of mistakes worth not repeating), `wiki/concepts/llm-wiki-pattern.md` (the foundational Karpathy pattern), `wiki/sources/claude-code-karpathy-obsidian-video-2026-04-14.md` (source summary of the video that started this), and `wiki/concepts/notebooklm-workflow.md` (the 7-bucket routing pattern).
-- **`pinecone/`** — Reference copies of the sync + search scripts (the canonical source-of-truth lives in `tools/`).
+- **`obsidian/vault-template/`** — Vault skeleton with wiki structure ready to go. Includes a starter `wiki/synthesis/claude-anti-patterns.md` (institutional memory of mistakes worth not repeating), `wiki/concepts/llm-wiki-pattern.md` (the foundational Karpathy pattern), `wiki/sources/claude-code-karpathy-obsidian-video-2026-04-14.md` (source summary of the video that started this), and `wiki/concepts/notebooklm-workflow.md` (how your notebooks are created, mirrored and verified).
+- **`pinecone/`** — The canonical sync + search scripts (`install.sh` copies them into your vault's `tools/`).
 - **`notebooklm/`** — Wiki refresh tooling for NotebookLM integration.
 - **`self-heal/`** — Self-healing pipeline: canonical file templates (workflow, agent script, setup guide), security model, cost model, rollout plan.
 - **`antigravity/`** — Integration spec for multi-model agent orchestration.
 - **`paperclip/`** — Integration spec for organizational coordination.
-- **`docs/setup-guide.md`** — Full setup walkthrough.
+- **`docs/onboarding/build_onboarding_pdf.py`** — builds the onboarding PDF (edit it, re-run, commit both).
+- **`docs/setup-guide.md`** — the earlier manual walkthrough, superseded by the onboarding PDF.
 ## The self-healing pipeline
 
 Every Open Scaffold app ships with autonomous bug diagnosis and repair. Users report bugs in-app; a Claude agent pipeline diagnoses the issue and produces a verified PR — at ~$0.13 per attempt. The `self-heal/` directory contains the canonical templates for shipping this to any app:
@@ -74,7 +78,7 @@ See `self-heal/README.md` for the full architecture, security model, and rollout
 
 ## Full setup
 
-See [`docs/setup-guide.md`](docs/setup-guide.md) for the complete walkthrough — accounts, dependencies, vault creation, Pinecone indexing, NotebookLM notebooks, and nightly sync scheduling.
+See **[`Limitless-Stack-Onboarding.pdf`](Limitless-Stack-Onboarding.pdf)** — accounts, vault creation, NotebookLM notebooks, optional Pinecone, Roll Call, and day-to-day operation.
 
 ## License
 

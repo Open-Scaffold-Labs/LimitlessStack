@@ -1,0 +1,9 @@
+{
+  "_about": "Copy to .authors.json at the root of a vault you SHARE with teammates. tools/authorship-guard.py then enforces: anyone may add; only a line's author may change or remove it; members/<login>/ and wiki/my-tasks/<login>.md belong to that person. List every email each person commits with.",
+  "people": {
+    "your-github-login":     {"name": "Your Name",     "emails": ["you@example.com"]},
+    "teammate-github-login": {"name": "Teammate Name", "emails": ["teammate@example.com", "teammate@work.example.com"]}
+  },
+  "exempt_paths": ["tools/.*-state.json", "tools/logs/*"],
+  "exempt_line_patterns": ["^updated: "]
+}

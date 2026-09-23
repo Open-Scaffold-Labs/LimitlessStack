@@ -17,10 +17,10 @@
 #   - Run preflight to verify
 #
 # Usage:
-#   /Users/matthewlavin/LimitlessStack/bin/limitless-stack-init my-project /path/to/target
+#   ~/LimitlessStack/bin/limitless-stack-init my-project /path/to/target
 #
 # Or symlink to a directory on PATH for shorter invocation:
-#   ln -s /Users/matthewlavin/LimitlessStack/bin/limitless-stack-init /usr/local/bin/
+#   ln -s ~/LimitlessStack/bin/limitless-stack-init /usr/local/bin/
 
 set -euo pipefail
 
@@ -35,8 +35,8 @@ if [ "$#" -lt 2 ]; then
   echo "  target_path    where to scaffold the project (created if missing)"
   echo ""
   echo "Examples:"
-  echo "  limitless-stack-init the-match /Users/me/the-match"
-  echo "  limitless-stack-init firehazmat /Users/me/firehazmat --description 'Firefighter hazmat reference app'"
+  echo "  limitless-stack-init my-research ~/my-research"
+  echo "  limitless-stack-init my-app ~/my-app --description 'Knowledge base for my app'"
   exit 1
 fi
 
@@ -84,6 +84,8 @@ if [ -d "$TARGET/wiki" ]; then
 else
   cp -r "$LIMITLESS_STACK_HOME/obsidian/vault-template/wiki" "$TARGET/wiki"
   mkdir -p "$TARGET/wiki/apps" "$TARGET/wiki/entities"
+  # Stamp today's date into the starter pages' __TODAY__ markers.
+  find "$TARGET/wiki" -name '*.md' -exec perl -pi -e "s/__TODAY__/$(date +%F)/g" {} +
   echo "  ✓ wiki/ created with starter pages"
 fi
 
@@ -119,6 +121,10 @@ else
       "$LIMITLESS_STACK_HOME/templates/CLAUDE.md.template" \
       > "$TARGET/CLAUDE.md"
   echo "  ✓ CLAUDE.md created"
+fi
+if [ ! -f "$TARGET/AGENTS.md" ]; then
+  cp "$LIMITLESS_STACK_HOME/templates/AGENTS.md.template" "$TARGET/AGENTS.md"
+  echo "  ✓ AGENTS.md created — points any coding agent at CLAUDE.md"
 fi
 
 # ── 5b/6: .gitignore ────────────────────────────────────

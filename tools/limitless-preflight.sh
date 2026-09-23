@@ -108,6 +108,9 @@ LIMITLESS_DEFAULT_NB_ID=""         # full UUID
 LIMITLESS_DEFAULT_NB_LABEL=""
 LIMITLESS_REMINDER_NB_ID=""
 LIMITLESS_OBSIDIAN_MIN_PAGES="10"  # default; manifest's OBSIDIAN.expected_min_pages overrides
+LIMITLESS_LOG_ORDER_BASELINE="0"   # default; manifest's LOG_ORDER_BASELINE overrides (a vault's own log history)
+LIMITLESS_HERMES_URL=""            # manifest SERVICES.hermes_health_url — YOUR agent runtime, if you run one
+LIMITLESS_PAPERCLIP_URL=""         # manifest SERVICES.paperclip_health_url — YOUR Paperclip, if you run one
 
 if [ -f "$VAULT/.limitless-project.py" ]; then
   LIMITLESS_HAS_MANIFEST=true
@@ -122,6 +125,10 @@ try:
     print('DESCRIPTION=' + getattr(m, 'DESCRIPTION', ''))
     obs = getattr(m, 'OBSIDIAN', {}) or {}
     print('OBSIDIAN_MIN_PAGES=' + str(obs.get('expected_min_pages', 10)))
+    print('LOG_ORDER_BASELINE=' + str(int(getattr(m, 'LOG_ORDER_BASELINE', 0))))
+    svc = getattr(m, 'SERVICES', {}) or {}
+    print('HERMES_URL=' + str(svc.get('hermes_health_url', '')))
+    print('PAPERCLIP_URL=' + str(svc.get('paperclip_health_url', '')))
     nb = getattr(m, 'NOTEBOOKLM', {}) or {}
     routes = nb.get('routes', [])
     default = nb.get('default')
@@ -182,6 +189,10 @@ except Exception as e:
   LIMITLESS_CHECKS=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^CHECKS=' | cut -d= -f2-)
   LIMITLESS_DESCRIPTION=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^DESCRIPTION=' | cut -d= -f2-)
   LIMITLESS_OBSIDIAN_MIN_PAGES=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^OBSIDIAN_MIN_PAGES=' | cut -d= -f2-)
+  LIMITLESS_LOG_ORDER_BASELINE=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^LOG_ORDER_BASELINE=' | cut -d= -f2-)
+  LIMITLESS_LOG_ORDER_BASELINE="${LIMITLESS_LOG_ORDER_BASELINE:-0}"
+  LIMITLESS_HERMES_URL=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^HERMES_URL=' | cut -d= -f2-)
+  LIMITLESS_PAPERCLIP_URL=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^PAPERCLIP_URL=' | cut -d= -f2-)
   LIMITLESS_PROJECT_ROUTES=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^PROJECT_ROUTES=' | cut -d= -f2-)
   LIMITLESS_DEDUPE_NOTEBOOKS=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^DEDUPE_NOTEBOOKS=' | cut -d= -f2-)
   LIMITLESS_REMINDER_FILES=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^REMINDER_FILES=' | cut -d= -f2-)
@@ -492,7 +503,7 @@ if [ -d "$VAULT/.git" ]; then
   if [ "$UNCOMMITTED" -eq 0 ]; then
     ok "git clean (no uncommitted changes)"
   else
-    warn "$UNCOMMITTED uncommitted files in vault" "git -C \"$VAULT\" status --short · ask Matt before committing"
+    warn "$UNCOMMITTED uncommitted files in vault" "git -C \"$VAULT\" status --short · ask the vault owner before committing"
   fi
 
   # Unpushed commits
@@ -700,7 +711,9 @@ if [ -r "$VAULT/wiki/index.md" ]; then
   # stay quiet on historical damage and fire when the count RISES; raising it to
   # the measured floor is what keeps its teeth. Do not raise it again without
   # naming the new entry and the date you measured it.
-  LOG_ORDER_BASELINE=32   # measured 2026-09-11 over 750 headings
+  # Per-vault since 2026-09-23: each vault records ITS OWN historical count as
+  # LOG_ORDER_BASELINE in .limitless-project.py (a fresh vault has 0).
+  LOG_ORDER_BASELINE="$LIMITLESS_LOG_ORDER_BASELINE"
   LOG_MD="$VAULT/wiki/log.md"
   if [ -r "$LOG_MD" ]; then
     LOG_HEADS_N=$(grep -c '^## \[' "$LOG_MD" 2>/dev/null || true)
@@ -720,7 +733,7 @@ if [ -r "$VAULT/wiki/index.md" ]; then
            "move the new entry to the END of wiki/log.md (CLAUDE.md: append-only). Do NOT reflow the file — 19 entries carry 'the entry above' references. Cite entries as '[YYYY-MM-DD] op | label', never by line number."
     elif [ "$LOG_BACKWARD" -lt "$LOG_ORDER_BASELINE" ]; then
       warn "wiki/log.md order IMPROVED ($LOG_BACKWARD backward transitions, baseline $LOG_ORDER_BASELINE) — the baseline is stale" \
-           "update LOG_ORDER_BASELINE in tools/limitless-preflight.sh to $LOG_BACKWARD so the check keeps its teeth"
+           "set LOG_ORDER_BASELINE = $LOG_BACKWARD in .limitless-project.py so the check keeps its teeth"
     else
       ok "wiki/log.md order held ($LOG_HEADS_N entries, $LOG_BACKWARD backward transitions = baseline)"
     fi
@@ -996,7 +1009,7 @@ if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
     #
     # It still PRINTS, so the state never goes invisible, and the two skills the
     # other store is missing are still named. It just stops counting as drift.
-    accepted "Cowork skill(s) behind ~/.claude/skills: ${cw_stale%% } (scanned $cw_seen) — known, Matt's to clear when he next uses that store" \
+    accepted "Cowork skill(s) behind ~/.claude/skills: ${cw_stale%% } (scanned $cw_seen) — known, the vault owner's to clear on their next use of that store" \
          "zip each as <name>/SKILL.md into <name>.skill → Claude Settings → Capabilities. Per store; the on-disk cache is read-only, so cp does nothing. Do NOT re-report this to Matt — he knows."
   else
     ok "Cowork skills match ~/.claude/skills ($cw_seen scanned)"
@@ -1034,7 +1047,7 @@ if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
     # accepted() for the same reason as the staleness check above: `rm` cannot
     # reach that store either, so no session can ever clear this. It prints and
     # names the skills; it does not pin the verdict or get re-reported to Matt.
-    accepted "Cowork still SERVES deleted skill(s): ${cw_orphan%% } — known, clears on Matt's next use of that store" \
+    accepted "Cowork still SERVES deleted skill(s): ${cw_orphan%% } — known, clears on the vault owner's next use of that store" \
          "remove via Claude Settings → Capabilities in the store that still lists them; rm cannot reach it. Do NOT re-report this to Matt — he knows."
   fi
 else
@@ -1304,7 +1317,7 @@ except Exception as e:
     # it ("it is in 30 log entries already"). Printing it without counting it is
     # what that instruction actually asks for.
     PINECONE_CAPPED=1
-    accepted "Pinecone embedding quota exhausted (monthly cap hit) — known state, session may proceed" "account-level, Matt's to clear (upgrade or monthly reset). pinecone-search + pinecone-sync stay non-functional until then — see wiki/concepts/pinecone-warehouse.md"
+    accepted "Pinecone embedding quota exhausted (monthly cap hit) — known state, session may proceed" "account-level, the account owner's to clear (upgrade or monthly reset). pinecone-search + pinecone-sync stay non-functional until then — see wiki/concepts/pinecone-warehouse.md"
   elif echo "$EMBED_PROBE" | grep -q '"error"'; then
     warn "Pinecone embedding probe failed (non-quota error)" "$EMBED_PROBE"
   elif echo "$EMBED_PROBE" | grep -q '"ok": *true'; then
@@ -1554,12 +1567,12 @@ else
       # Either way the remediation is VERIFY, never a blind re-upload. (2026-08-20)
       EDIT_LAG_HOURS=$(( (WIKI_DEFAULT_NEWEST_TS - LAST_REFRESH_TS) / 3600 ))
       if [ "$EDIT_LAG_HOURS" -lt 24 ]; then
-        accepted "notebooklm wiki default bucket (cdaa7a43): wiki edits postdate the last refresh by ${EDIT_LAG_HOURS}h — normal end-of-session order, not evidence of absence" "if you need certainty: python3.11 tools/notebooklm-wiki-refresh.py --only wiki --verify-existing (no uploads), or ask the notebook directly. Do NOT re-upload on an mtime alone."
+        accepted "notebooklm wiki default bucket (${LIMITLESS_DEFAULT_NB_ID%%-*}): wiki edits postdate the last refresh by ${EDIT_LAG_HOURS}h — normal end-of-session order, not evidence of absence" "if you need certainty: python3.11 tools/notebooklm-wiki-refresh.py --only wiki --verify-existing (no uploads), or ask the notebook directly. Do NOT re-upload on an mtime alone."
       else
-        warn "notebooklm wiki default bucket (cdaa7a43) has edits ${EDIT_LAG_HOURS}h newer than last refresh (${LAST_REFRESH_AGE_HOURS}h ago) — a session likely ended without refreshing" "python3.11 tools/notebooklm-wiki-refresh.py --only wiki --verify-existing   # verify FIRST; retry cap two"
+        warn "notebooklm wiki default bucket (${LIMITLESS_DEFAULT_NB_ID%%-*}) has edits ${EDIT_LAG_HOURS}h newer than last refresh (${LAST_REFRESH_AGE_HOURS}h ago) — a session likely ended without refreshing" "python3.11 tools/notebooklm-wiki-refresh.py --only wiki --verify-existing   # verify FIRST; retry cap two"
       fi
     else
-      ok "notebooklm wiki default bucket (cdaa7a43) in sync (${LAST_REFRESH_AGE_HOURS}h since refresh)"
+      ok "notebooklm wiki default bucket (${LIMITLESS_DEFAULT_NB_ID%%-*}) in sync (${LAST_REFRESH_AGE_HOURS}h since refresh)"
     fi
   else
     warn "no notebooklm-wiki default bucket state file" "python3.11 tools/notebooklm-wiki-refresh.py --seed --only wiki"
@@ -1812,9 +1825,9 @@ fi
 echo ""
 
 # ── [6/7] Antigravity ───────────────────────────────────
-echo "[6/7] Antigravity (multi-model IDE)"
-begin_tool "antigravity" "Antigravity" "IDE"
-skip "not session-critical for Cowork agents; Matt's local IDE"
+echo "[6/7] Hub Workspace (optional)"
+begin_tool "antigravity" "Antigravity" "IDE"   # internal id/label kept: a Hub's stack-health display keys on it
+skip "not session-critical — an optional workspace; nothing to check from here"
 echo ""
 
 # ── [6b] Hermes (agent runtime) ─────────────────────────
@@ -1824,7 +1837,10 @@ echo ""
 # cold-wakes on the first request — that's expected, not a failure.
 echo "[6b] Hermes (agent runtime — Hub Workspace)"
 begin_tool "hermes" "Hermes" "Agent runtime"
-HERMES_URL="${HERMES_HEALTH_URL:-https://openscaffold-hermes.fly.dev}"
+HERMES_URL="${HERMES_HEALTH_URL:-$LIMITLESS_HERMES_URL}"
+if [ -z "$HERMES_URL" ]; then
+  skip "no agent runtime configured for this vault (optional — manifest SERVICES.hermes_health_url)"
+else
 HERMES_HEALTH=$(curl -s -m 30 "$HERMES_URL/health" 2>/dev/null)
 if echo "$HERMES_HEALTH" | grep -q '"status": *"ok"'; then
   HERMES_VER=$(echo "$HERMES_HEALTH" | sed -n 's/.*"version": *"\([^"]*\)".*/\1/p')
@@ -1850,7 +1866,8 @@ if echo "$HERMES_HEALTH" | grep -q '"status": *"ok"'; then
   fi
 else
   warn "hermes gateway not healthy at $HERMES_URL (suspended cold-wake can take a few s — rerun once before escalating)" \
-       "fly status -a openscaffold-hermes && fly logs -a openscaffold-hermes"
+       "check the runtime host's status and logs for $HERMES_URL"
+fi
 fi
 echo ""
 
@@ -1859,13 +1876,17 @@ echo ""
 # progress" skip was 3 months stale — found during the F-8 monitoring pass).
 echo "[7/7] Paperclip (agent coordination)"
 begin_tool "paperclip" "Paperclip" "Coordination"
-PAPERCLIP_URL="${PAPERCLIP_HEALTH_URL:-https://paperclip-prod.fly.dev}"
+PAPERCLIP_URL="${PAPERCLIP_HEALTH_URL:-$LIMITLESS_PAPERCLIP_URL}"
+if [ -z "$PAPERCLIP_URL" ]; then
+  skip "no Paperclip configured for this vault (optional — manifest SERVICES.paperclip_health_url)"
+else
 PAPERCLIP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 30 "$PAPERCLIP_URL/health" 2>/dev/null)
 if [ "$PAPERCLIP_CODE" = "200" ]; then
   ok "paperclip healthy (HTTP 200) at $PAPERCLIP_URL"
 else
   warn "paperclip /health returned HTTP ${PAPERCLIP_CODE:-none} at $PAPERCLIP_URL" \
-       "fly status -a paperclip-prod (Dale's org access) · check the Hub /agents page"
+       "check the Paperclip host's status for $PAPERCLIP_URL"
+fi
 fi
 echo ""
 
@@ -1923,7 +1944,10 @@ except Exception:
     if [ -f "$VAULT/tools/anti-pattern-index.py" ]; then
       AP_IDX_OUT=$(cd "$VAULT" && python3.11 tools/anti-pattern-index.py --check 2>&1)
       if [ $? -eq 0 ]; then
-        ok "anti-pattern retrieval index in sync (every entry routed)"
+        case "$AP_IDX_OUT" in
+          "not enabled"*) ok "anti-pattern retrieval index: not enabled for this vault (optional)" ;;
+          *)              ok "anti-pattern retrieval index in sync (every entry routed)" ;;
+        esac
       else
         warn "anti-pattern index drift: $(echo "$AP_IDX_OUT" | head -2 | tr '\n' ' ')" \
              "cd \"$VAULT\" && python3.11 tools/anti-pattern-index.py   (add new entries to SITUATIONS first)"
@@ -2023,11 +2047,15 @@ print(json.dumps({
    "$(IFS=$'\x1f'; echo "${WARNINGS[*]:-}")" \
    "$(IFS=$'\x1f'; echo "${BLOCKERS[*]:-}")" \
    "$(whoami)@$(hostname -s 2>/dev/null || echo unknown)")
+    # The activity feed's repo label: this vault's own GitHub repo (origin), else its folder.
+    ACT_REPO="$(git -C "$VAULT" remote get-url origin 2>/dev/null || true)"
+    ACT_REPO="${ACT_REPO%/}"; ACT_REPO="${ACT_REPO##*/}"; ACT_REPO="${ACT_REPO##*:}"; ACT_REPO="${ACT_REPO%.git}"
+    [ -n "$ACT_REPO" ] || ACT_REPO="$(basename "$VAULT")"
     "$SCRIPT_DIR/report-activity.sh" \
       --source     agent \
       --event-type preflight \
       --actor      roll-call \
-      --repo       openscaffold-wiki \
+      --repo       "$ACT_REPO" \
       --title      "$ACT_TITLE" \
       --payload    "$ACT_PAYLOAD" || true
   fi
@@ -2096,25 +2124,32 @@ echo "                      Search the SUBJECT, never the artifact/branch/gamepl
 echo "                      Before asserting broken/missing/never-decided/can't-be-done-here:"
 echo "                      Skill(audit-before-claim)."
 echo ""
-echo "  • Pinecone       → OVER THE MONTHLY EMBEDDING CAP. Do NOT run pinecone-search.py or"
-echo "                      pinecone-sync.py, do NOT retry, do NOT 'check if it's back'."
-echo "                      Account-level, Matt's to clear. A 429 is not 'no hits' — say the"
-echo "                      corpus search was unavailable. Use tools/recall.sh instead."
+if [ "${PINECONE_CAPPED:-0}" = "1" ]; then
+echo "  • Pinecone       → OVER THE MONTHLY EMBEDDING CAP (measured this run). Do NOT run"
+echo "                      pinecone-search.py or pinecone-sync.py, do NOT retry."
+echo "                      Account-level, the account owner's to clear. A 429 is not 'no hits' —"
+echo "                      say the corpus search was unavailable. Use tools/recall.sh instead."
+elif check_enabled pinecone; then
+echo "  • Pinecone       → python3.11 tools/pinecone-search.py \"<question>\" on YOUR index"
+echo "                      (named in .limitless-project.py). Cite hits as <repo>/<path>."
+else
+echo "  • Pinecone       → not enabled for this vault (optional). Use tools/recall.sh + the wiki."
+fi
 echo ""
 echo "  • NotebookLM     → Invoke Skill(notebooklm) for ANY NotebookLM operation."
 echo "                      CLI always via mcp__desktop-commander__start_process("
 echo "                        command=\"notebooklm use <id> && notebooklm ask '...'\","
 echo "                        shell=\"zsh\", timeout_ms=90000)"
 echo "                      Do NOT pip-install notebooklm-py or run notebooklm login in sandbox"
-echo "                      (no display, wiped each session) — anti-pattern #10."
-echo "                      Reminder layer: ab4b7ccb  ·  Full wiki mirror: cdaa7a43"
+echo "                      (no display, wiped each session)."
+echo "                      Reminder layer: ${LIMITLESS_REMINDER_NB_ID%%-*}  ·  Full wiki mirror: ${LIMITLESS_DEFAULT_NB_ID%%-*}   (from .limitless-project.py)"
 echo ""
 echo "  • CLAUDE.md      → Read at session start; it's the trust anchor for all the above."
 echo "                      Edit via the Edit tool on the sandbox path, commit + push at end."
 echo ""
-echo "  • End-of-session → (1) git commit + push vault · (2) pinecone-sync.py --changed-only"
+echo "  • End-of-session → (1) git commit + push vault · (2) pinecone-sync.py --changed-only (if enabled + not capped)"
 echo "                      (3) notebooklm-wiki-refresh.py if wiki changed"
-echo "                      (4) refresh ab4b7ccb sources if its curated files changed"
+echo "                      (4) refresh the reminder notebook if its curated files changed"
 echo ""
 
 # ── Machine-readable findings channel (--findings-out) ──
@@ -2196,7 +2231,7 @@ if [ "$RED" -gt 0 ]; then
 elif [ "$YELLOW" -gt 0 ]; then
   echo "  ⚠ VERDICT: WARN — $YELLOW drift finding(s)"
   echo ""
-  echo "  Warnings (report to Matt, may proceed with acknowledgement):"
+  echo "  Warnings (report to the vault owner, may proceed with acknowledgement):"
   for w in "${WARNINGS[@]}"; do echo "    - $w"; done   # unbound-ok: YELLOW>0 branch, and warn() appends to WARNINGS
   if [ "$ACCEPTED" -gt 0 ]; then
     echo ""

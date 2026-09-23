@@ -88,11 +88,17 @@ echo "   karpathy-guidelines = surgical-change discipline borrowed from forrestc
 if [ ! -d "$TARGET/wiki" ]; then
   echo "[4/9] Copying vault template..."
   cp -r "$SCRIPT_DIR/obsidian/vault-template/wiki" "$TARGET/wiki"
-  mkdir -p "$TARGET/raw/openscaffold-repos"
+  mkdir -p "$TARGET/raw/repos"
+  # Stamp today's date into the starter pages' __TODAY__ markers.
+  find "$TARGET/wiki" -name '*.md' -exec perl -pi -e "s/__TODAY__/$(date +%F)/g" {} +
   echo "  ✓ wiki/ and raw/ created"
 else
   echo "[4/9] wiki/ already exists — skipping vault template"
 fi
+# raw/ is where YOUR sources and repos go. Created every run (idempotent): a vault made by
+# limitless-stack-init already has wiki/, so the branch above skips — and raw/ used to be
+# skipped with it.
+mkdir -p "$TARGET/raw/repos"
 
 # --- 5. Tool scripts ---
 echo "[5/9] Copying tool scripts..."
@@ -129,6 +135,8 @@ cp "$SCRIPT_DIR/tools/task-file-check.py"         "$TARGET/tools/task-file-check
 # lesson rather than rediscovering it.
 cp "$SCRIPT_DIR/tools/shell-unbound-check.py"    "$TARGET/tools/shell-unbound-check.py"
 cp "$SCRIPT_DIR/tools/git-pre-commit.sh"         "$TARGET/tools/git-pre-commit.sh"
+cp "$SCRIPT_DIR/tools/authorship-guard.py"       "$TARGET/tools/authorship-guard.py"
+cp "$SCRIPT_DIR/tools/test-authorship-guard.sh"  "$TARGET/tools/test-authorship-guard.sh"
 cp "$SCRIPT_DIR/tools/install-git-hooks.sh"      "$TARGET/tools/install-git-hooks.sh"
 cp "$SCRIPT_DIR/tools/test-preflight-abort.sh"   "$TARGET/tools/test-preflight-abort.sh"
 # Citation resolver + its fence (added 2026-08-24). A bare `client/src/...` path
@@ -183,16 +191,30 @@ fi
 echo "  ✓ pinecone-sync, pinecone-search, notebooklm-wiki-refresh, notebooklm-dedupe,"
 echo "    session-bootstrap, limitless-preflight (the script Roll Call calls),"
 echo "    nightly-selfheal (Loop 5), trust-anchor-check (Loop 6), anti-pattern-candidates (rec #5)"
-echo "  Note: edit tools/limitless-preflight.sh + notebooklm-wiki-refresh.py to point at"
-echo "  YOUR vault path and YOUR NotebookLM bucket IDs before first run."
+echo "  Note: your notebook IDs and Pinecone index go in .limitless-project.py (step 6),"
+echo "  never in the tool scripts."
 
-# --- 6. CLAUDE.md ---
+# --- 6. CLAUDE.md + manifest (the SAME templates limitless-stack-init uses) ---
+# The project id defaults to the vault folder's name, lower-cased and dashed.
+PROJECT_ID="$(basename "$TARGET" | tr '[:upper:] _' '[:lower:]--')"
 if [ ! -f "$TARGET/CLAUDE.md" ]; then
-  echo "[6/9] Copying CLAUDE.md vault schema..."
-  sed -n '/^```markdown$/,/^```$/p' "$SCRIPT_DIR/claude-md/vault-schema.md" | sed '1d;$d' > "$TARGET/CLAUDE.md"
-  echo "  ✓ CLAUDE.md created — edit the [YOUR DOMAIN] placeholders"
+  echo "[6/9] Creating CLAUDE.md (operating manual) for '$PROJECT_ID'..."
+  sed -e "s|__PROJECT_ID__|$PROJECT_ID|g" -e "s|__DESCRIPTION__|a Limitless Stack vault|g" \
+      "$SCRIPT_DIR/templates/CLAUDE.md.template" > "$TARGET/CLAUDE.md"
+  echo "  ✓ CLAUDE.md created — fill in every [YOUR ...] marker with your own details"
 else
   echo "[6/9] CLAUDE.md already exists — skipping"
+fi
+if [ ! -f "$TARGET/.limitless-project.py" ]; then
+  sed -e "s|__PROJECT_ID__|$PROJECT_ID|g" -e "s|__DESCRIPTION__|a Limitless Stack vault|g" \
+      "$SCRIPT_DIR/templates/limitless-project.template.py" > "$TARGET/.limitless-project.py"
+  echo "  ✓ .limitless-project.py created — put YOUR notebook IDs and Pinecone index in it"
+else
+  echo "  ✓ .limitless-project.py already exists — kept"
+fi
+if [ ! -f "$TARGET/AGENTS.md" ]; then
+  cp "$SCRIPT_DIR/templates/AGENTS.md.template" "$TARGET/AGENTS.md"
+  echo "  ✓ AGENTS.md created — points any coding agent at CLAUDE.md"
 fi
 
 # --- 7. Self-heal templates ---
@@ -253,13 +275,15 @@ fi
 echo ""
 echo "=== Installation Complete ==="
 echo ""
-echo "Everything is installed. What Dale (or anyone) does next:"
+echo "Installed. Next — everything below uses YOUR accounts and YOUR vault:"
 echo ""
-echo "  1. Edit $TARGET/CLAUDE.md — set your domain and customize"
-echo "  2. Clone repos into $TARGET/raw/openscaffold-repos/"
-echo "  3. Run: $PYTHON $TARGET/tools/pinecone-sync.py"
-echo "  4. Run: notebooklm login  (one-time Google auth)"
-echo "  5. Run: bash $TARGET/tools/session-bootstrap.sh"
+echo "  1. notebooklm login   (your Google account), then create YOUR two notebooks:"
+echo "       notebooklm create \"$PROJECT_ID\"   and   notebooklm create \"$PROJECT_ID Reminder\""
+echo "     and put their IDs in $TARGET/.limitless-project.py"
+echo "  2. Fill in every [YOUR ...] marker in $TARGET/CLAUDE.md"
+echo "  3. Pinecone (optional): create YOUR index, store YOUR key in the Keychain, add"
+echo "     \"pinecone\" to CHECKS in the manifest — see the onboarding guide"
+echo "  4. git init + first commit, then: bash $TARGET/tools/limitless-preflight.sh"
 echo ""
 if [ "$KEYS_MISSING" = true ]; then
   echo "⚠ API keys still need to be set (see above). Everything else is ready."

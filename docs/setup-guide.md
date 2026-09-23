@@ -1,3 +1,6 @@
+> **Superseded (2026-09-23).** This is the earlier manual walkthrough and describes one specific
+> setup. To build your own stack, follow **[`Limitless-Stack-Onboarding.pdf`](../Limitless-Stack-Onboarding.pdf)**.
+
 # OpenScaffold Memory System — Setup Guide
 
 **Paste this entire document into a Claude Code or Cowork session and say "Set this up for me."** The session will replicate the memory system Matt Lavin built on 2026-04-14. Target platform: macOS with an existing Homebrew install. Estimated wall time: ~30 minutes once accounts are in hand.

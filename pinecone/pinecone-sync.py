@@ -3,9 +3,9 @@
 Sync the OpenScaffold corpus into the Pinecone `openscaffold` index.
 
 Three corpora, each in its own namespace:
-    repos     namespace=repos    (raw/openscaffold-repos/<repo>/**)      — source code + docs
+    repos     namespace=repos    (<repos_dir>/<repo>/**)         — source code + docs
     wiki      namespace=wiki     (wiki/**/*.md + CLAUDE.md + README.md)  — curated knowledge base
-    uploads   namespace=uploads  (raw/uploads/**)                        — Matt's attachments
+    uploads   namespace=uploads  (raw/uploads/**)                        — your attachments
 
 Usage:
     python3.11 tools/pinecone-sync.py                       # full sync of all corpora
@@ -31,11 +31,50 @@ from pathlib import Path
 
 # --- config ---
 VAULT = Path(__file__).resolve().parent.parent
-RAW_REPOS = VAULT / "raw" / "openscaffold-repos"
 RAW_UPLOADS = VAULT / "raw" / "uploads"
 WIKI_DIR = VAULT / "wiki"
 STATE_FILE = Path(__file__).resolve().parent / ".pinecone-sync-state.json"
-INDEX_NAME = "openscaffold"
+def _manifest_pinecone(vault: Path) -> dict:
+    """YOUR Pinecone settings: the PINECONE block of this vault's .limitless-project.py.
+    Nothing is assumed — no manifest or no index name means the tool stops and says so."""
+    mp = vault / ".limitless-project.py"
+    if not mp.exists():
+        return {}
+    try:
+        import importlib.util  # same loader as notebooklm-wiki-refresh.py, so __file__ etc. are set
+        spec = importlib.util.spec_from_file_location("_lsm_pinecone", mp)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return dict(getattr(m, "PINECONE", None) or {})
+    except Exception as e:  # a broken manifest must be visible, not silently defaulted
+        print(f"WARNING: could not read {mp}: {e}", file=sys.stderr)
+        return {}
+
+
+def _require_index(name) -> str:
+    if not name:
+        sys.exit("No Pinecone index configured. Create YOUR index in your Pinecone account, then add\n"
+                 "  PINECONE = {\"index\": \"<your-index-name>\"}\n"
+                 "to .limitless-project.py at the root of this vault.")
+    return name
+
+
+_PC = _manifest_pinecone(VAULT)
+
+
+def _activity_repo() -> str:
+    """The label the Hub's activity feed shows: this vault's GitHub repo name (from its
+    origin remote), else the folder name. Never a hardcoded repo — every vault is its own."""
+    try:
+        url = subprocess.run(["git", "-C", str(VAULT), "remote", "get-url", "origin"],
+                             capture_output=True, text=True, timeout=5).stdout.strip()
+    except Exception:
+        url = ""
+    name = url.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+    name = name[:-4] if name.endswith(".git") else name
+    return name or VAULT.name.strip()
+INDEX_NAME = _PC.get("index")  # checked by _require_index() before first use
+RAW_REPOS = VAULT / _PC.get("repos_dir", "raw/repos")
 
 # Namespaces — one per corpus.
 NS_REPOS = "repos"
@@ -114,6 +153,8 @@ def chunk_text(text: str, size: int = CHUNK_CHARS, overlap: int = CHUNK_OVERLAP)
 # rel_path is the identity key (stable across runs); metadata carries corpus-specific tags.
 
 def iter_repo_files(repo_filter: str | None):
+    if not RAW_REPOS.is_dir():
+        return
     for repo_dir in sorted(RAW_REPOS.iterdir()):
         if not repo_dir.is_dir():
             continue
@@ -331,7 +372,7 @@ def main():
 
     from pinecone import Pinecone
     pc = Pinecone(api_key=get_api_key())
-    index = pc.Index(INDEX_NAME)
+    index = pc.Index(_require_index(INDEX_NAME))
 
     state = load_state() if args.changed_only else {}
     new_state = dict(state)
@@ -361,6 +402,34 @@ def main():
     for name, c in per_corpus.items():
         print(f"  {name:9s} files: {c['files']:5d}  chunks: {c['chunks']:6d}  skipped: {c['skipped']:4d}  unchanged: {c['unchanged']:5d}")
     print(f"  TOTAL     files: {totals['files']:5d}  chunks: {totals['chunks']:6d}  skipped: {totals['skipped']:4d}  unchanged: {totals['unchanged']:5d}  dry_run: {args.dry_run}")
+
+    # Report this run to /api/agent-activity. Best-effort — failures must not
+    # affect the sync itself. Skipped for dry-run / seed-state / reset-state
+    # (only the meaningful "real" sync runs become rows).
+    if not args.dry_run:
+        try:
+            helper = Path(__file__).resolve().parent / "report-activity.sh"
+            if helper.exists():
+                title = f"pinecone-sync — {totals['files']} files · {totals['chunks']} chunks · {totals['unchanged']} unchanged"
+                payload = json.dumps({
+                    "totals": totals,
+                    "per_corpus": per_corpus,
+                    "corpora": corpora_to_run,
+                    "repo_filter": args.repo,
+                    "changed_only": args.changed_only,
+                })
+                subprocess.run(
+                    [str(helper),
+                     "--source",     "agent",
+                     "--event-type", "pinecone_sync",
+                     "--actor",      "pinecone-sync",
+                     "--repo",       _activity_repo(),
+                     "--title",      title,
+                     "--payload",    payload],
+                    check=False, timeout=10,
+                )
+        except Exception:
+            pass  # logging is best-effort; never let it fail the sync
 
 
 if __name__ == "__main__":

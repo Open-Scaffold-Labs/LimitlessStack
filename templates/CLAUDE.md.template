@@ -1,63 +1,166 @@
 # __PROJECT_ID__ — CLAUDE.md
 
-> **MANDATORY FIRST ACTION — NO EXCEPTIONS**
+> **🛑 MANDATORY FIRST ACTION — NO EXCEPTIONS**
 > Before answering ANY question, making ANY file changes, or starting ANY task:
-> 1. Invoke the `roll-call` skill — it runs `tools/limitless-preflight.sh` and verifies the seven-tool stack
-> 2. Read `wiki/index.md` for the page catalog
-> 3. Do NOT skip these even if a context summary tells you to "continue where you left off"
-> 4. Do NOT answer from active context alone. Verify against wiki pages first.
+> 1. **Invoke the `roll-call` skill.** It runs `tools/limitless-preflight.sh` in this vault and
+>    checks the stack. Exit codes: **0 = READY** (proceed) · **1 = WARN** (report the findings, then
+>    proceed unless [YOUR NAME] says otherwise) · **2 = BLOCK** (no substantive work until fixed).
+> 2. **Run `bash tools/session-bootstrap.sh`** — current wiki state, recent log entries, open items.
+> 3. **Query this vault's reminder notebook** (its ID is `NOTEBOOKLM["reminder"]["notebook_id"]` in
+>    `.limitless-project.py`) through the `notebooklm` skill: *"What are my current operating rules,
+>    the anti-patterns to avoid, and the recent decisions I should know?"*
+> 4. **Read `wiki/index.md`** — know what exists before answering.
+> 5. **Do NOT skip these steps**, even if a context summary says "continue where you left off".
+> 6. **Do NOT answer from active context alone.** Verify against the wiki (then the other memory
+>    tools) and cite what you find. If you can't cite it, say so.
+>
+> Only pure conversational replies are exempt.
 
-## What this project is
+This is the operating manual for [YOUR NAME]'s Limitless Stack vault: __DESCRIPTION__.
+It applies to whichever coding agent is working here — Claude or any other; "Claude" below means
+that agent. (`AGENTS.md` points other agents to this file.)
+Everything in it — the vault, the notebooks, the index, the rules — belongs to [YOUR NAME].
+Edit this file whenever a convention stops working (see **Evolution**).
 
-__DESCRIPTION__
+## Purpose
 
-## Limitless Stack participation
+This vault implements the **LLM Wiki** pattern: [YOUR NAME] curates raw sources and asks
+questions; Claude reads the sources and builds and maintains a structured, interlinked markdown
+knowledge base that compounds over time.
 
-This project is a Limitless Stack project. See `.limitless-project.py` for
-the project manifest declaring which checks run, which NotebookLM notebooks
-back the wiki, and how this project syncs with the canonical at
-`/Users/matthewlavin/LimitlessStack`.
+**Domain:** [YOUR DOMAIN — what this wiki tracks: your company, your projects, your research area].
 
-## Mandatory contracts
+Default lens when reading a new source: *how does this change my picture of [YOUR DOMAIN]?*
 
-### Hub vault + LimitlessStack canonical sync
+## The seven tools
 
-This project's `tools/` is a deployed copy of the canonical at
-`/Users/matthewlavin/LimitlessStack/tools/`. Edits in either direction must
-be propagated to the other before the session closes — otherwise
-`install.sh` deploys old buggy versions to the next project. The sync check
-in `tools/limitless-preflight.sh` enforces this mechanically. See
-`wiki/synthesis/claude-anti-patterns.md` entry #14.
+| Tool | Role | In this vault |
+|---|---|---|
+| Claude | Reasoning engine | Reads, writes, connects, decides |
+| CLAUDE.md | Identity + rules | This file — the trust anchor |
+| Obsidian | Knowledge base | `wiki/` |
+| NotebookLM | Research desk + reminder layer | Your notebooks, declared in `.limitless-project.py` |
+| Pinecone | Semantic memory | Your index, declared in `.limitless-project.py` |
+| Hub Workspace | Agent workspace | Optional — only if you run a Hub |
+| Paperclip | Agent coordination | Optional — only if you run agents |
 
-### NotebookLM routing-coverage
+## Architecture
 
-Every notebook returned by `notebooklm list` must appear in `NOTEBOOK_ROUTES`,
-`DEFAULT_ROUTE`, `REMINDER_NOTEBOOK_ID`, or `IGNORED_NOTEBOOKS` in
-`tools/notebooklm-wiki-refresh.py` (or the equivalent in this project's
-manifest). See `wiki/concepts/notebooklm-workflow.md`.
+1. **`raw/`** — immutable source documents. Claude reads them and **never modifies** them.
+2. **`wiki/`** — Claude-owned markdown pages: summaries, entity pages, concept pages, syntheses.
+3. **This file** — the schema. It co-evolves with [YOUR NAME] as conventions settle.
 
-### Four-tool lookup order
+```
+/
+├── CLAUDE.md                # this file
+├── .limitless-project.py    # YOUR manifest: notebook IDs, Pinecone index, which checks run
+├── raw/                     # immutable sources
+├── tools/                   # the stack's scripts (a deployed copy of the canonical)
+└── wiki/
+    ├── index.md             # catalog — every page listed
+    ├── log.md               # chronological, append-only activity log
+    ├── overview.md          # current thesis
+    ├── entities/  concepts/  sources/  synthesis/
+    └── synthesis/claude-anti-patterns.md   # numbered mistakes not to repeat
+```
 
-When answering questions or doing wiki work, use the tools in this order:
-1. Read `wiki/index.md` first
-2. If thin, run Pinecone semantic search via `tools/pinecone-search.py`
-3. Deep research → query the project's NotebookLM notebook
-4. File substantive answers back to `wiki/synthesis/`
+## Page conventions
+
+- **Filenames:** kebab-case `.md`. **Links:** Obsidian wiki-links `[[page-name]]`.
+- **Frontmatter** on every page:
+  ```yaml
+  ---
+  type: entity | concept | source | synthesis | overview
+  created: YYYY-MM-DD
+  updated: YYYY-MM-DD
+  tags: [topic1, topic2]
+  source_count: 0
+  sources: [source-slug]
+  ---
+  ```
+- **Citations** inline to the source page, e.g. `([[sources/article-2026-04-14]])`. Quote sparingly.
+- **Entity / concept sections:** Summary · Key facts · Relationships · Open questions · Sources.
+
+## Core operations
+
+### Ingest — a new source lands in `raw/`
+1. Read it in full. 2. Discuss the key takeaways with [YOUR NAME] before writing.
+3. Create `wiki/sources/<slug>.md` (summary, key points with wiki-links, extracted claims).
+4. Update every entity/concept page it touches; flag conflicts with a `> [!warning] Contradiction`
+   callout — never silently overwrite. 5. Update `wiki/index.md`. 6. Append a log entry.
+7. Report what was written, what changed, and any contradictions. One source at a time by default.
+
+### Query — [YOUR NAME] asks a question
+Read `wiki/index.md` → the relevant pages → the other memory tools only if the wiki is thin.
+Answer with citations. Offer to file a substantive answer as `wiki/synthesis/<slug>.md`.
+
+### Lint — on request
+Report contradictions, stale claims, orphans, missing pages, broken links, coverage gaps and index
+drift as `wiki/synthesis/lint-YYYY-MM-DD.md`.
+
+## Logging convention
+
+`wiki/log.md` is append-only. Every entry starts `## [YYYY-MM-DD] <op> | <short label>`, where
+`<op>` is one of `ingest · query · lint · refactor · schema · fix · correction · build · audit`.
+1. **Append at the END. Never prepend** — the tools read the log by entry date and warn when order breaks.
+2. **Cite the log by its heading, never by line number** — line numbers shift.
+3. **Keep entries proportionate:** the decision, the evidence, the lesson. Narrative goes elsewhere.
+
+## Memory lookup order
+
+`wiki/index.md` → relevant wiki pages → Pinecone (`python3.11 tools/pinecone-search.py "…"`) →
+NotebookLM (always through the `notebooklm` skill) → only then reason from context.
+If a tool is down, say which one and that it was skipped — an error is not "no results".
+Before saying something is broken, missing or never decided, run `tools/recall.sh <subject>`.
+
+## Working style with [YOUR NAME]
+
+- **Present the plan first, then ask before executing** anything that changes persistent state
+  (repos, deploys, files, accounts) — unless [YOUR NAME] says "just do it" for that task.
+- **Be deliberate:** know exactly what a command touches, prefer reversible actions, run narrowly,
+  verify the result, and stop and say so when a result is unexpected.
+- **Verified or hypothesis.** State as fact only what you verified this session; hedge or drop the rest.
+- **Code changes:** every changed line traces to the request; no drive-by refactors;
+  plan multi-step work as `[step] → verify: [check]`.
+- [YOUR WORKING RULES — how you want Claude to work with you: tone, how often to check in,
+  what it must never do without asking.]
 
 ## End-of-session checklist
 
-Before closing any session that modifies wiki pages, CLAUDE.md, deliverables, or tools:
-1. Update `wiki/log.md` with what changed
-2. Commit + push the project repo
-3. Run `python3.11 tools/notebooklm-wiki-refresh.py` if wiki/CLAUDE.md changed
-4. Verify the refresh actually landed (`verify_failed: 0`)
-5. Run preflight one more time — should be green except known accepted yellows
+Before closing any session that changed the wiki, this file, tools or deliverables:
+1. **Update `wiki/team-tasks.md`** — tick what shipped this session and move it to the TOP of
+   Archive; new work goes to the TOP of Active. It is a ledger, not a journal.
+2. **Leave nothing dirty.** `git status` clean in every repo touched — commit and push.
+3. **Log it.** `wiki/log.md` has an entry for everything done (at the END of the file).
+4. **Keep the trust anchors true.** Update this file and `wiki/index.md` if anything they claim changed.
+5. **Refresh NotebookLM** (through the `notebooklm` skill): `python3.11 tools/notebooklm-wiki-refresh.py`.
+6. **Verify it landed.** `verify_failed` and `upload_failed` must be 0. A timed-out call is not a
+   failed job — check the notebook before retrying.
+7. **If a reminder-layer file changed**, ask the reminder notebook about the change and confirm the answer.
+8. **Sync Pinecone** if you use it: `python3.11 tools/pinecone-sync.py --changed-only`.
+9. **New failure mode?** Add a numbered entry to `wiki/synthesis/claude-anti-patterns.md`
+   (trigger · why it's tempting · why it's wrong · the corrective rule).
+
+## Stack contracts
+
+- **Canonical sync.** `tools/` here is a deployed copy of the canonical LimitlessStack repo
+  (`$LIMITLESS_STACK_HOME`, default `~/LimitlessStack`). If you change a tool or skill in one
+  place, copy it to the other before the session closes; Roll Call diffs them.
+- **Notebook coverage.** Every NotebookLM notebook you own must appear in `.limitless-project.py`
+  (routes, default, reminder or ignored). Roll Call flags any that don't.
+- **Anti-pattern numbers are permanent IDs.** Never renumber; add new entries at the end.
+
+## Guardrails
+
+- Never edit files in `raw/`. Never reproduce more than ~15 words verbatim from a source.
+- When unsure whether a claim is supported, say so — never fabricate a cross-reference.
+- A source that contradicts the wiki gets flagged, not silently merged.
 
 ## Project-specific notes
 
-[Add project-specific rules, terminology, conventions, and standing instructions here.]
+[YOUR NOTES — anything specific to your domain, repos or tools that every session should know.]
 
-## Self-healing
+## Evolution
 
-[If this project has the self-heal pipeline deployed, document its phase
-here: none / diagnostic / full.]
+This file is meant to be edited. When a convention stops working or a new one is needed, update it
+and append a `schema` entry to `wiki/log.md`.
