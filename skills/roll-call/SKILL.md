@@ -1,20 +1,20 @@
 ---
 name: roll-call
-description: Session-start readiness check for the Limitless Stack. Run this FIRST in any session that touches the OpenScaffold / Limitless-Stack work — it mechanically verifies that all seven tools (Claude, CLAUDE.md, Obsidian, NotebookLM, Pinecone, Hub Workspace, Paperclip) are present, authenticated, and in sync before doing substantive work. Trigger any time the user greets you with "hey claude", asks you to pick up where you left off, hands off context from a previous session, references the Limitless Stack, or starts a new conversation on this vault. Also trigger if the user says "roll call", "preflight", "are you ready", "is everything connected", or similar. Do NOT begin substantive work (writing wiki pages, editing code, answering architecture questions, running ingests) until Roll Call returns READY or Matt explicitly greenlights proceeding with known drift.
+description: Session-start readiness check for the Limitless Stack. Run this FIRST in any session that touches the OpenScaffold / Limitless-Stack work — it mechanically verifies that all seven tools (Claude, CLAUDE.md, Obsidian, NotebookLM, Pinecone, Hub Workspace, Paperclip) are present, authenticated, and in sync before doing substantive work. Trigger any time the user greets you with "hey claude", asks you to pick up where you left off, hands off context from a previous session, references the Limitless Stack, or starts a new conversation on this vault. Also trigger if the user says "roll call", "preflight", "are you ready", "is everything connected", or similar. Do NOT begin substantive work (writing wiki pages, editing code, answering architecture questions, running ingests) until Roll Call returns READY or the user explicitly greenlights proceeding with known drift.
 ---
 
 # Roll Call — Limitless Stack Readiness Check
 
-Every substantive session on this vault needs all seven tools of the [[concepts/limitless-stack]] working together. Roll Call is the mechanical gate that makes sure they are — *before* work starts, not after Matt notices something drifted.
+Every substantive session on this vault needs all seven tools of the [[concepts/limitless-stack]] working together. Roll Call is the mechanical gate that makes sure they are — *before* work starts, not after the user notices something drifted.
 
 ## Why this exists
 
-The #1 failure mode on this project (see [[synthesis/claude-anti-patterns]] entries #1, #6, #10) is answering from active context while one or more of the memory tools is silently stale. Examples:
+The #1 failure mode (see [[synthesis/claude-anti-patterns]]) is answering from active context while one or more of the memory tools is silently stale. Examples:
 
 - Pinecone hasn't been synced since the last wiki edit → semantic search misses recent pages.
-- NotebookLM's `ab4b7ccb` reminder notebook hasn't been refreshed since CLAUDE.md changed → the "recent mistakes" query returns yesterday's rules.
-- The vault has uncommitted changes from a prior session → Matt's GitHub copy drifts from the canonical.
-- The `notebooklm` CLI's cookie jar has expired on Matt's Mac → every notebook query fails.
+- The reminder notebook hasn't been refreshed since CLAUDE.md changed → the "recent mistakes" query returns yesterday's rules.
+- The vault has uncommitted changes from a prior session → the GitHub copy drifts from the local one.
+- The `notebooklm` CLI's sign-in has expired on the user's computer → every notebook query fails.
 
 Reading the prose rules in CLAUDE.md relies on Claude's discipline. Roll Call replaces discipline with a script that *cannot* be forgotten once it's called.
 
@@ -28,7 +28,7 @@ To scaffold a new project that participates in Roll Call: run `$LIMITLESS_STACK_
 
 ## What Roll Call does
 
-Runs `tools/limitless-preflight.sh` on Matt's Mac (via `mcp__desktop-commander__start_process`) and interprets the exit code.
+Runs `tools/limitless-preflight.sh` on the user's own computer (Claude Code's shell, or Desktop Commander's `start_process` from the Claude desktop app) and interprets the exit code. It must run where the user signed in to NotebookLM — never in a cloud sandbox.
 
 The script checks each of the seven tools:
 
@@ -36,15 +36,15 @@ The script checks each of the seven tools:
 2. **CLAUDE.md** — exists and is readable.
 3. **Obsidian** — `wiki/index.md` readable, page count sane, git clean (or count uncommitted files).
 4. **Pinecone** — API key in Keychain, `describe_index_stats` works, last sync newer than the newest wiki edit.
-5. **NotebookLM** — `notebooklm auth check --test` passes; `cdaa7a43` mirror fresh; `ab4b7ccb` reminder sources newer than the files they mirror.
-6. **Hub Workspace** — not session-critical for Cowork agents (it's Matt's local IDE). Documented skip.
-7. **Paperclip** — deployment in progress (task #38). Documented skip until deployed; script will add a real check then.
+5. **NotebookLM** — `notebooklm auth check --test` passes; the default wiki notebook is fresh; the reminder notebook's sources are newer than the files they mirror (IDs from the manifest).
+6. **Hub Workspace** — optional; checked only when the manifest's `SERVICES` names a health URL.
+7. **Paperclip** — optional; checked only when the manifest's `SERVICES` names a health URL.
 
 Exit codes:
 
 - `0` — **READY**. All green. Proceed with the user's request.
-- `1` — **WARN**. Yellow findings only. Report them briefly to Matt, then proceed unless Matt says otherwise.
-- `2` — **BLOCK**. Red findings. Do NOT proceed with substantive work until fixed or Matt explicitly overrides.
+- `1` — **WARN**. Yellow findings only. Report them briefly to the user, then proceed unless they say otherwise.
+- `2` — **BLOCK**. Red findings. Do NOT proceed with substantive work until fixed or the user explicitly overrides.
 
 ## How to run
 
@@ -60,7 +60,7 @@ The script is idempotent, read-only (except for calling `notebooklm auth check` 
 
 ## Interpreting the output
 
-The script prints two blocks at the end: a **USAGE REMINDERS** section (behavioral routing contract — how to actually use each tool this session) and a green/yellow/red **verdict** with findings. Copy both into your first response to Matt so the state AND the routing rules are visible.
+The script prints two blocks at the end: a **USAGE REMINDERS** section (behavioral routing contract — how to actually use each tool this session) and a green/yellow/red **verdict** with findings. Copy both into your first response to the user so the state AND the routing rules are visible.
 
 Example output on a typical day:
 
@@ -108,12 +108,12 @@ Drift in either column — stale sync OR drifting routing — is a problem. Roll
 
 ## Deferred-blocker protocol (added 2026-06-10)
 
-When Roll Call returns WARN/BLOCK and Matt says "skip that" / proceeds anyway, the deferral is **one-time, not session-long**. See [[synthesis/claude-anti-patterns]] #24 (the NotebookLM "blocked all day while actually fine" incident).
+When Roll Call returns WARN/BLOCK and the user says "skip that" / proceeds anyway, the deferral is **one-time, not session-long**. The failure it prevents: a NotebookLM BLOCK that was transient got reported as broken for a whole session.
 
 1. **Make the blocker visible immediately** — create a task (TaskCreate) for it so it cannot fall out of awareness mid-session.
 2. **Never re-assert the blocker from memory.** Before claiming the tool is still broken — in a status summary, a wrap-up, or an end-of-session step — re-run the relevant check (`notebooklm auth check --test`, the Pinecone probe, etc.). It's a 10-second command, and states recover: the 2026-06-10 NotebookLM BLOCK was transient, but Claude reported it broken for the whole session without re-checking.
 3. **Repairing a tool routes through that tool's owning skill.** Fixing NotebookLM auth IS a NotebookLM operation → invoke Skill(notebooklm) first and follow its runbook. Same for any tool with an owning skill.
-4. **Never silently skip end-of-session steps that depend on a deferred tool.** Re-check first; if genuinely still broken, list the skipped steps explicitly in the wrap-up so Matt sees exactly what didn't happen.
+4. **Never silently skip end-of-session steps that depend on a deferred tool.** Re-check first; if genuinely still broken, list the skipped steps explicitly in the wrap-up so the user sees exactly what didn't happen.
 
 ## Self-improvement rule (important)
 
@@ -128,7 +128,7 @@ Also log the improvement:
 - Append a `schema` entry to `wiki/log.md` describing what check was added/tuned and why.
 - If the drift mode is behavioral (something Claude did wrong), add it to [[synthesis/claude-anti-patterns]] as a numbered entry.
 
-This is the "self-learning" loop Matt specified: *"the limitless stack gets more powerful with each use."* The preflight script is the embodied memory; this skill is the reminder to feed it.
+This is the stack's self-learning loop: *it gets more powerful with each use.* The preflight script is the embodied memory; this skill is the reminder to feed it.
 
 ## When NOT to run Roll Call
 
@@ -147,7 +147,7 @@ For everything else — wiki questions, architecture questions, ingests, code ed
 
 ## Sources
 
-- `tools/limitless-preflight.sh` — the actual check script (lives in the Obsidian vault, runs on Matt's Mac).
+- `tools/limitless-preflight.sh` — the actual check script (lives in the vault, runs on the user's computer).
 - [[concepts/limitless-stack]] — the seven-tool vision this skill enforces.
 - [[synthesis/claude-anti-patterns]] — the behavioral failure modes this skill exists to prevent.
 - [[concepts/notebooklm-workflow]] — the desktop-commander routing pattern used in check #5.
