@@ -500,42 +500,48 @@ def content():
                "Run it once by hand to prove it works."))
     f.append(check("<font face='Courier'>bash tools/test-authorship-guard.sh</font> ends with \"0 failed\"."))
 
-    # 09 ─ Grok Bot
+    # 09 ─ Grok Bot  (walked through on a real Grok Bot 0.58, 2026-09-24)
     f += section("09", "Using Grok Bot", "xAI's always-on agents, working on your own Mac")
     f.append(P("Grok Bot runs on xAI's own cloud computer. Your stack lives on your Mac: your vault, your "
                "Keychain, your NotebookLM sign-in. So Grok Bot has to run the stack's commands on your Mac, "
                "and it needs the stack's rules handed to it. Two steps make that work."))
     f += step(1, "Let it run commands on your Mac", [
-        P("Install Grok Bot's desktop app on your Mac: commands on your own computer go through it. In its "
-          "settings (Settings, General), set <b>Execution on Local Computer</b> to <b>Ask every time</b>: you see "
-          "each command before it runs and approve it. Move to <i>Always allow</i> only once you trust the routine."),
+        P("In the Grok Bot desktop app on your Mac, open <b>Grok Bot, Settings, Computer</b> and set "
+          "<b>Execution on this computer</b> to <b>Ask every time</b> (the default is <i>Never allow</i>). "
+          "Grok Bot then asks before each command: <i>View the command</i> shows it, <b>Allow once</b> runs just "
+          "that one, the X denies it. Keep <i>Always allow</i> off until you trust the routine."),
         P("Type passwords and sign-in codes yourself, never into the chat. Keep your keys in your Mac's Keychain, "
           "not on the Bot's cloud computer, which every Bot on your account can use."),
     ])
     f += step(2, "Give it the stack's rules as a skill", [
         P("Don't count on Grok Bot reading <font face='Courier'>AGENTS.md</font>, <font face='Courier'>CLAUDE.md</font> "
-          "or the Claude skills by itself; its docs don't say it does. Save this as a private skill (Marketplace, Your "
-          "plugins, Manage plugins and skills), filling in the two &lt;...&gt; values, and start any work in your "
-          "vault by typing <font face='Courier'>/</font> and choosing it:"),
+          "or the Claude skills by itself. Grok Bot makes private skills for you: paste this to your Bot, fill in "
+          "the two &lt;...&gt; values, and ask it to <i>save this as a private skill, exactly as written</i>. It then "
+          "shows under Marketplace, Your plugins. Each command Grok Bot runs starts fresh in your home folder, so "
+          "the skill uses full paths."),
         code([
             "Name: Limitless Stack session",
             "When to use: before any work in my vault at <vault path on my Mac>.",
-            "Access: Execution on Local Computer (my Mac), inside the vault folder.",
+            "Access: Execution on this computer (my Mac).",
+            "Rule: every command starts in my home folder, so always use full",
+            "paths, with the vault path in quotes.",
             "Steps:",
-            "1. On my local computer: cd '<vault path on my Mac>'",
-            "2. Read AGENTS.md, then CLAUDE.md in full, then",
-            "   members/<my-github-login>/CLAUDE.md if it exists, and follow them.",
-            "   Where they say Skill(...) or Desktop Commander, run the same",
-            "   command directly on my local computer.",
-            "3. Run Roll Call: bash tools/limitless-preflight.sh",
+            "1. Read <vault path>/AGENTS.md, then <vault path>/CLAUDE.md in",
+            "   full, then <vault path>/members/<my-github-login>/CLAUDE.md if",
+            "   it exists, and follow them. Where they say Skill(...) or",
+            "   Desktop Commander, run the same command directly on my Mac.",
+            "2. Run Roll Call as one command:",
+            "   bash '<vault path>/tools/limitless-preflight.sh'",
             "   0 = READY. 1 = WARN, tell me. 2 = BLOCK, stop and tell me.",
-            "4. Do the task.",
-            "5. Before finishing: the end-of-session checklist in CLAUDE.md.",
+            "3. Do the task.",
+            "4. Before finishing: the end-of-session checklist in CLAUDE.md.",
             "Validate: Roll Call printed a verdict; the checklist is done.",
             "Return: the Roll Call verdict, what changed, anything left open.",
-            "Needs my approval: every commit or push, and any command outside the vault.",
+            "Needs my approval: every commit or push, any write to a repo,",
+            "and any command outside the vault.",
         ]),
-        check("run the skill in a new chat: Grok Bot asks to run Roll Call on your Mac, and reports READY, WARN or BLOCK."),
+        check("in a chat, say <i>\"Run the Limitless Stack session skill, Roll Call only.\"</i> It asks to read "
+              "the files and run Roll Call on your Mac, then reports READY, WARN or BLOCK."),
     ])
     f.append(callout("<b>Sharing a vault?</b> The same skill works in a teammate's copy of a shared vault. Their "
                      "Roll Call shows only their own machine, sign-ins and task file (section 08)."))
@@ -551,7 +557,8 @@ def content():
         ["Tools out of sync with LimitlessStack", "You edited a tool in one place. Copy it to the other, or re-run install.sh."],
         ["overview.md placeholder warning", "Write your overview and give it real dates (step 5)."],
         ["Your agent can't run notebooklm", "It must run on your own computer, where you signed in — not inside a cloud sandbox."],
-        ["Grok Bot can't reach your Mac", "Allow Execution on Local Computer in its settings; check its desktop app is installed and open on your Mac."],
+        ["Grok Bot can't reach your Mac", "Settings, Computer: set Execution on this computer to Ask every time (not Never allow)."],
+        ["Grok Bot can't find the vault", "Its commands start in your home folder: use the full vault path in quotes, as the skill does."],
     ], [0.36, 0.64]))
     f.append(Spacer(1, 14))
     f.append(P("The Limitless Stack is one integrated system: the value compounds across all seven "
