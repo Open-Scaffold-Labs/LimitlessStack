@@ -66,6 +66,13 @@ SKILLS_DIR="$HOME/.claude/skills"
 # .claude-plugin/plugin.json and the preflight's sync loop, so removing a skill
 # meant editing three places and forgetting one left a dangling reference.
 # Add or remove a skill directory and this, and the preflight, both follow.
+# A person's own version of a skill, kept in a SHARED vault at
+# members/<login>/skills/<skill>/, wins over the public one for that person
+# (2026-09-24 — e.g. the vault owner's roll-call keeps their exact vault path).
+PERSONAL_LOGIN=""
+if [ -f "$TARGET/.authors.json" ] && git -C "$TARGET" rev-parse --git-dir >/dev/null 2>&1; then
+  PERSONAL_LOGIN="$(cd "$TARGET" && python3 "$SCRIPT_DIR/tools/authorship-guard.py" --whoami 2>/dev/null || true)"
+fi
 for skill_dir in "$SCRIPT_DIR/skills/"*/; do
   [ -f "$skill_dir/SKILL.md" ] || continue
   skill=$(basename "$skill_dir")
@@ -77,7 +84,13 @@ for skill_dir in "$SCRIPT_DIR/skills/"*/; do
   # preflight's */SKILL.md sync loop, fixed the same day: the mechanism built to
   # propagate an asset could not see a new KIND of asset.
   cp -R "$skill_dir". "$SKILLS_DIR/$skill"/
-  echo "  ✓ $skill skill installed"
+  personal_dir="$TARGET/members/$PERSONAL_LOGIN/skills/$skill"
+  if [ -n "$PERSONAL_LOGIN" ] && [ -f "$personal_dir/SKILL.md" ]; then
+    cp -R "$personal_dir"/. "$SKILLS_DIR/$skill"/
+    echo "  ✓ $skill skill installed — your personal copy (members/$PERSONAL_LOGIN/skills/$skill)"
+  else
+    echo "  ✓ $skill skill installed"
+  fi
 done
 echo "  (limitless-stack = 7-tool protocol; notebooklm = full NotebookLM API;"
 echo "   roll-call = session-start preflight;"

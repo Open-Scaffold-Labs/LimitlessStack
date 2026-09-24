@@ -931,12 +931,26 @@ if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
   # NOTE: fed by process substitution, NOT a pipe — a piped `while` runs in a
   # subshell and every counter increment below would be discarded.
   skill_files_seen=0
+  skills_personal=0
   for canon_dir in "$LIMITLESS_STACK_HOME/skills/"*/; do
     [ -d "$canon_dir" ] || continue
     [ -f "${canon_dir}SKILL.md" ] || continue
     s=$(basename "$canon_dir")
     inst_dir="$HOME/.claude/skills/$s"
     skills_seen=$((skills_seen + 1))
+    skill_is_personal=false
+    # PERSONAL COPY (2026-09-24). A person may keep their own version of a skill
+    # in the vault at members/<login>/skills/<skill>/ — Matt's roll-call keeps his
+    # exact vault path; the public canonical stays generic for everyone else
+    # ("theres no reason for us to change something that already works for us").
+    # The installed copy is then compared to THAT file, never to the canonical,
+    # so it is neither reported as drift nor proposed for promotion to the
+    # public repo. install.sh installs the same personal copy.
+    if [ -n "$LIMITLESS_RUNNER" ] && [ -f "$VAULT/members/$LIMITLESS_RUNNER/skills/$s/SKILL.md" ]; then
+      canon_dir="$VAULT/members/$LIMITLESS_RUNNER/skills/$s/"
+      skills_personal=$((skills_personal + 1))
+      skill_is_personal=true
+    fi
     if [ ! -f "$inst_dir/SKILL.md" ]; then
       skills_clean=false
       warn "skill '$s' missing from ~/.claude/skills/" \
@@ -952,7 +966,13 @@ if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
              "cp -R '${canon_dir}'. '$inst_dir'/"
       elif ! diff -q "${canon_dir}${rel}" "$inst_dir/$rel" >/dev/null 2>&1; then
         skills_clean=false
-        canonical_drift_warn "skill '$s' ($rel)" "${canon_dir}${rel}" "$inst_dir/$rel"
+        if $skill_is_personal; then
+          # Never "promote to canonical": a personal copy stays out of the public repo.
+          warn "skill '$s' ($rel) differs from your personal copy in members/$LIMITLESS_RUNNER/skills/$s/" \
+               "keep the right one: cp '${canon_dir}${rel}' '$inst_dir/$rel'   (or the reverse, if the installed one is the fix)"
+        else
+          canonical_drift_warn "skill '$s' ($rel)" "${canon_dir}${rel}" "$inst_dir/$rel"
+        fi
       fi
     done < <(cd "$canon_dir" && find . -type f ! -name '.DS_Store' | sed 's|^\./||' | sort)
     while IFS= read -r rel; do
@@ -975,7 +995,11 @@ if [ -d "$LIMITLESS_STACK_HOME/tools" ]; then
     warn "skills sync compared 0 FILES across $skills_seen skill(s)" \
          "the per-file walk found nothing — check the find/sed in the loop above"
   elif $skills_clean; then
-    ok "skills in sync with LimitlessStack canonical ($skills_seen skills, $skill_files_seen files)"
+    if [ "$skills_personal" -gt 0 ]; then
+      ok "skills in sync ($skills_seen skills, $skill_files_seen files; $skills_personal from your personal copies in members/$LIMITLESS_RUNNER/skills/)"
+    else
+      ok "skills in sync with LimitlessStack canonical ($skills_seen skills, $skill_files_seen files)"
+    fi
   fi
 
   # ── The agent skill stores this loop CANNOT see (added 2026-08-20) ────
