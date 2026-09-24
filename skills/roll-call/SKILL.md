@@ -9,7 +9,7 @@ Every substantive session on this vault needs all seven tools of the [[concepts/
 
 ## Why this exists
 
-The #1 failure mode (see [[synthesis/claude-anti-patterns]]) is answering from active context while one or more of the memory tools is silently stale. Examples:
+The #1 failure mode (see [[synthesis/claude-anti-patterns]] — the lessons on skipping the lookup order, leaving NotebookLM out, and signing in to a CLI inside a sandbox) is answering from active context while one or more of the memory tools is silently stale. Examples:
 
 - Pinecone hasn't been synced since the last wiki edit → semantic search misses recent pages.
 - The reminder notebook hasn't been refreshed since CLAUDE.md changed → the "recent mistakes" query returns yesterday's rules.
@@ -22,9 +22,9 @@ Reading the prose rules in CLAUDE.md relies on Claude's discipline. Roll Call re
 
 Roll Call runs `tools/limitless-preflight.sh` from **whichever vault is currently open** — the preflight is per-project, not global. Each project's preflight reads `.limitless-project.py` (the project manifest) at the vault root to determine which checks apply and what notebook IDs / Pinecone index / sync paths to use.
 
-Check #5 specifics come from that vault's manifest: `notebooklm auth check --test` passes; the default wiki notebook (`NOTEBOOKLM["default"]`) is fresh; the reminder notebook's (`NOTEBOOKLM["reminder"]`) sources are newer than the files they mirror. **Every vault declares its own notebook IDs** — read the open vault's `.limitless-project.py`; never assume another vault's IDs apply.
+Check #5 specifics come from that vault's manifest: `notebooklm auth check --test` passes; the default wiki notebook (`NOTEBOOKLM["default"]`) is fresh; the reminder notebook's (`NOTEBOOKLM["reminder"]["notebook_id"]`) sources are newer than the files they mirror. **Every vault declares its own notebook IDs** — read the open vault's `.limitless-project.py`; never assume another vault's IDs apply.
 
-To scaffold a new project that participates in Roll Call: run `$LIMITLESS_STACK_HOME/bin/limitless-stack-init <project_id> <target_path>` (default `~/LimitlessStack`). That installs tools/, wiki/, CLAUDE.md, and a manifest skeleton.
+To scaffold a new project that participates in Roll Call: run `~/LimitlessStack/bin/limitless-stack-init <project_id> <target_path>` (if you cloned LimitlessStack somewhere else, use that path). That installs tools/, wiki/, CLAUDE.md, and a manifest skeleton.
 
 ## What Roll Call does
 
@@ -40,6 +40,8 @@ The script checks each of the seven tools:
 6. **Hub Workspace** — optional; checked only when the manifest's `SERVICES` names a health URL.
 7. **Paperclip** — optional; checked only when the manifest's `SERVICES` names a health URL.
 
+**In a shared vault** (one with `.authors.json` and a `VAULT_OWNER` in the manifest), Roll Call is per person: whoever runs it sees only their own machine, their own sign-ins and their own task file (`wiki/my-tasks/<login>.md`). The vault's upkeep — tools kept in step with LimitlessStack, the nightly job, the lesson review, the shared task list, the notebooks' freshness and capacity, the Pinecone sync — appears only on the owner's Roll Call. A teammate's Roll Call also checks that their Google account can open every notebook the vault uses.
+
 Exit codes:
 
 - `0` — **READY**. All green. Proceed with the user's request.
@@ -50,13 +52,15 @@ Exit codes:
 
 ```
 mcp__desktop-commander__start_process(
-  command="bash '<absolute path of the vault open in this session>/tools/limitless-preflight.sh'",
+  command="bash '<vault>/tools/limitless-preflight.sh'",
   shell="zsh",
   timeout_ms=90000
 )
 ```
 
-The script is idempotent, read-only (except for calling `notebooklm auth check` which refreshes the token silently), and typically finishes in under 10 seconds.
+`<vault>` is the folder that holds this vault's CLAUDE.md: the current directory for a terminal agent (Claude Code, Grok Build), or the connected folder's path on the computer in the Claude desktop app. Keep the quotes — a vault folder name can end in a space.
+
+The script is idempotent, read-only (except for calling `notebooklm auth check` which refreshes the token silently), and typically finishes in about 25 seconds (measured 2026-09-24). If a run ever goes past the Claude desktop app's ~60-second tool-call limit, run it detached and read its output file.
 
 ## Interpreting the output
 
@@ -108,7 +112,7 @@ Drift in either column — stale sync OR drifting routing — is a problem. Roll
 
 ## Deferred-blocker protocol (added 2026-06-10)
 
-When Roll Call returns WARN/BLOCK and the user says "skip that" / proceeds anyway, the deferral is **one-time, not session-long**. The failure it prevents: a NotebookLM BLOCK that was transient got reported as broken for a whole session.
+When Roll Call returns WARN/BLOCK and the user says "skip that" / proceeds anyway, the deferral is **one-time, not session-long**. The failure it prevents (see the lesson on caching a session-start failure as permanent): a NotebookLM BLOCK that was transient got reported as broken for a whole session.
 
 1. **Make the blocker visible immediately** — create a task (TaskCreate) for it so it cannot fall out of awareness mid-session.
 2. **Never re-assert the blocker from memory.** Before claiming the tool is still broken — in a status summary, a wrap-up, or an end-of-session step — re-run the relevant check (`notebooklm auth check --test`, the Pinecone probe, etc.). It's a 10-second command, and states recover: the 2026-06-10 NotebookLM BLOCK was transient, but Claude reported it broken for the whole session without re-checking.

@@ -29,6 +29,11 @@ DESCRIPTION = "__DESCRIPTION__"
 # Add "pinecone" once YOUR Pinecone index exists and YOUR key is in the Keychain.
 CHECKS = []
 
+# Only for a vault you SHARE with teammates (.authors.json): your GitHub login. The vault's
+# upkeep checks then run on your Roll Call only, and each teammate's Roll Call shows just
+# their own machine, sign-ins and task file. Leave it out for a vault only you use.
+# VAULT_OWNER = "your-github-login"
+
 # YOUR Pinecone index (create it in your own Pinecone account — see the onboarding guide).
 # tools/pinecone-sync.py and tools/pinecone-search.py read the index name from here.
 PINECONE = {

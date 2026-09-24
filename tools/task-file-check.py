@@ -28,6 +28,10 @@ USAGE
     task-file-check.py            # check; exit 1 if findings
     task-file-check.py --quiet    # one line per finding, for the preflight
     task-file-check.py --prove    # self-test: each rule must fire on a planted fault
+    task-file-check.py --for LOGIN [--team]
+                                  # one person's file only (wiki/my-tasks/LOGIN.md); --team adds
+                                  # the shared wiki/team-tasks.md. Roll Call in a SHARED vault uses
+                                  # this so each person sees only what is theirs (2026-09-24).
 Exit 0 clean, 1 findings, 2 usage/internal error.
 """
 import datetime
@@ -366,9 +370,18 @@ def prove():
 
 
 def main():
+    global TASK_FILES
     if "--prove" in sys.argv:
         return prove()
     quiet = "--quiet" in sys.argv
+    if "--for" in sys.argv:
+        i = sys.argv.index("--for")
+        if i + 1 >= len(sys.argv) or sys.argv[i + 1].startswith("-"):
+            print("task-file-check: --for needs a GitHub login", file=sys.stderr)
+            return 2
+        own = f"wiki/my-tasks/{sys.argv[i + 1]}.md"
+        TASK_FILES = (["wiki/team-tasks.md"] if "--team" in sys.argv else []) + \
+                     ([own] if (VAULT / own).is_file() else [])
     findings = run()
     if not quiet:
         print(f"\ntask-file check — {len(TASK_FILES)} file(s)\n")

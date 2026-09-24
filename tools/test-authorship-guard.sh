@@ -78,7 +78,13 @@ run_cases() {
   as_dale add -A; as_dale commit -qm "dale rewrites matt" --no-verify
   "$PY" "$G" --commit HEAD >/dev/null 2>&1;                 expect "CI mode: finds a violation that skipped the hook" 1 "$?"
   "$PY" "$G" --commit HEAD~1 >/dev/null 2>&1;               expect "CI mode: a clean commit passes" 0 "$?"
+  w=$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.email GIT_CONFIG_VALUE_0=dale@example.com "$PY" "$G" --whoami 2>/dev/null)
+  [ "$w" = "dale" ] && ok "whoami: a mapped email names its owner" || bad "whoami: a mapped email names its owner (got '$w')"
+  w=$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.email GIT_CONFIG_VALUE_0=who@example.com "$PY" "$G" --whoami 2>/dev/null)
+  [ "$w" = "unknown <who@example.com>" ] && ok "whoami: an unmapped email is reported as unknown" || bad "whoami: an unmapped email is reported as unknown (got '$w')"
   rm -f .authors.json; as_matt add -A; as_matt commit -qm "no config" -q
+  w=$("$PY" "$G" --whoami 2>/dev/null)
+  [ -z "$w" ] && ok "whoami: prints nothing when the rule is off" || bad "whoami: prints nothing when the rule is off (got '$w')"
   sed -i.b 's/dale line 1/x/' wiki/page.md; rm -f wiki/page.md.b
                                                              expect "opt-in: no .authors.json means no checks" 0 "$(staged as_matt)"
 }

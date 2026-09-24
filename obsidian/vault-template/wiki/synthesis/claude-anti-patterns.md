@@ -1,7 +1,8 @@
 ---
 type: synthesis
-created: 2026-09-23
-updated: 2026-09-23
+created: __TODAY__
+updated: __TODAY__
+anti_patterns_reviewed: __TODAY__   # the lesson-review ritual's date (Roll Call reads it) — not a page-edit date
 tags: [meta, operations, lessons]
 ---
 

@@ -111,6 +111,8 @@ LIMITLESS_OBSIDIAN_MIN_PAGES="10"  # default; manifest's OBSIDIAN.expected_min_p
 LIMITLESS_LOG_ORDER_BASELINE="0"   # default; manifest's LOG_ORDER_BASELINE overrides (a vault's own log history)
 LIMITLESS_HERMES_URL=""            # manifest SERVICES.hermes_health_url — YOUR agent runtime, if you run one
 LIMITLESS_PAPERCLIP_URL=""         # manifest SERVICES.paperclip_health_url — YOUR Paperclip, if you run one
+LIMITLESS_VAULT_OWNER=""           # manifest VAULT_OWNER — GitHub login of the person who keeps a SHARED vault in order
+LIMITLESS_PINECONE_INDEX=""        # manifest PINECONE.index — this vault's Pinecone index
 
 if [ -f "$VAULT/.limitless-project.py" ]; then
   LIMITLESS_HAS_MANIFEST=true
@@ -129,6 +131,9 @@ try:
     svc = getattr(m, 'SERVICES', {}) or {}
     print('HERMES_URL=' + str(svc.get('hermes_health_url', '')))
     print('PAPERCLIP_URL=' + str(svc.get('paperclip_health_url', '')))
+    print('VAULT_OWNER=' + str(getattr(m, 'VAULT_OWNER', '') or ''))
+    pcm = getattr(m, 'PINECONE', {}) or {}
+    print('PINECONE_INDEX=' + str(pcm.get('index', '') or ''))
     nb = getattr(m, 'NOTEBOOKLM', {}) or {}
     routes = nb.get('routes', [])
     default = nb.get('default')
@@ -193,6 +198,8 @@ except Exception as e:
   LIMITLESS_LOG_ORDER_BASELINE="${LIMITLESS_LOG_ORDER_BASELINE:-0}"
   LIMITLESS_HERMES_URL=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^HERMES_URL=' | cut -d= -f2-)
   LIMITLESS_PAPERCLIP_URL=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^PAPERCLIP_URL=' | cut -d= -f2-)
+  LIMITLESS_VAULT_OWNER=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^VAULT_OWNER=' | cut -d= -f2-)
+  LIMITLESS_PINECONE_INDEX=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^PINECONE_INDEX=' | cut -d= -f2-)
   LIMITLESS_PROJECT_ROUTES=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^PROJECT_ROUTES=' | cut -d= -f2-)
   LIMITLESS_DEDUPE_NOTEBOOKS=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^DEDUPE_NOTEBOOKS=' | cut -d= -f2-)
   LIMITLESS_REMINDER_FILES=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^REMINDER_FILES=' | cut -d= -f2-)
@@ -212,6 +219,30 @@ check_enabled() {
   [ "$LIMITLESS_HAS_MANIFEST" = "false" ] && return 0
   echo " $LIMITLESS_CHECKS " | grep -q " $name "
 }
+
+# ── Whose Roll Call is this? (added 2026-09-24) ─────────
+# In a SHARED vault (one with .authors.json) Roll Call is per PERSON. Each person
+# sees their own machine, their own sign-ins and their own task file. The vault's
+# upkeep (tools kept in step with the canonical, the nightly job, the lesson
+# review, the shared task list, the notebooks' freshness, duplicates and
+# capacity, the Pinecone sync) belongs to the vault owner (manifest VAULT_OWNER)
+# and appears only on the owner's Roll Call. Matt, 2026-09-24: a teammate's Roll
+# Call "should not be pointing to anything of mine it needs to be tailored
+# specifically to him".
+# Who is running it = the vault's git email, mapped through .authors.json by the
+# same code the commit check uses (authorship-guard.py --whoami).
+# FAIL-OPEN BY DESIGN: a personal vault (no .authors.json), a manifest with no
+# VAULT_OWNER, or an identity that cannot be read all run the FULL Roll Call
+# exactly as before. Only a positively identified non-owner gets the tailored one.
+LIMITLESS_RUNNER=""
+LIMITLESS_IS_OWNER=1
+if [ -f "$VAULT/.authors.json" ] && [ -n "$LIMITLESS_VAULT_OWNER" ] && [ -f "$VAULT/tools/authorship-guard.py" ]; then
+  LIMITLESS_RUNNER="$(cd "$VAULT" && python3.11 tools/authorship-guard.py --whoami 2>/dev/null || true)"
+  if [ -n "$LIMITLESS_RUNNER" ] && [ "$LIMITLESS_RUNNER" != "$LIMITLESS_VAULT_OWNER" ]; then
+    LIMITLESS_IS_OWNER=0
+  fi
+fi
+owner_run() { [ "$LIMITLESS_IS_OWNER" = "1" ]; }
 
 # Counters + finding lists
 GREEN=0
@@ -463,6 +494,14 @@ echo ""
 # evaluated and pretending otherwise produces a stack-wide false alarm.
 if ! network_probe; then network_abort "at start"; fi
 
+if ! owner_run; then
+  case "$LIMITLESS_RUNNER" in
+    unknown*) echo "  Roll Call for $LIMITLESS_RUNNER — add this email to .authors.json under your GitHub login so Roll Call and the commit check know it is you." ;;
+    *)        echo "  Roll Call for $LIMITLESS_RUNNER — your machine, your sign-ins and your own task file (wiki/my-tasks/$LIMITLESS_RUNNER.md)." ;;
+  esac
+  echo ""
+fi
+
 # ── [1/7] Claude ────────────────────────────────────────
 echo "[1/7] Claude (reasoning engine)"
 begin_tool "claude" "Claude" "Reasoning"
@@ -537,7 +576,7 @@ for _sib in "$HUB_REPO:Hub" \
       ok "$_sib_name repo clean and pushed"
     else
       [ "${_dirty:-0}" -gt 0 ] && warn "$_sib_name: $_dirty tracked file(s) modified" \
-        "git -C \"$_sib_path\" status --short · ask Matt before committing (untracked files are not counted)"
+        "git -C \"$_sib_path\" status --short · ask the person you work for before committing (untracked files are not counted)"
       [ "${_ahead:-0}" -gt 0 ] && warn "$_sib_name: $_ahead commit(s) ahead of origin/main" \
         "git -C \"$_sib_path\" push origin main"
     fi
@@ -601,9 +640,20 @@ if [ -r "$VAULT/wiki/index.md" ]; then
   # Keyed on where the items actually live, not on a filename convention — a
   # naming convention is a hand-kept list wearing a different hat (#65 addendum).
   deadline_scan_files() {
-    find "$VAULT/wiki" -iname '*TODO*.md' -type f 2>/dev/null
-    [ -f "$VAULT/wiki/team-tasks.md" ] && echo "$VAULT/wiki/team-tasks.md"
-    find "$VAULT/wiki/my-tasks" -name '*.md' -type f 2>/dev/null
+    # Per person (2026-09-24): the runner's own task file; the shared list and
+    # wiki TODOs only on the owner's Roll Call. No runner known = every file.
+    if [ -z "$LIMITLESS_RUNNER" ]; then
+      find "$VAULT/wiki" -iname '*TODO*.md' -type f 2>/dev/null
+      [ -f "$VAULT/wiki/team-tasks.md" ] && echo "$VAULT/wiki/team-tasks.md"
+      find "$VAULT/wiki/my-tasks" -name '*.md' -type f 2>/dev/null
+      return 0
+    fi
+    if owner_run; then
+      find "$VAULT/wiki" -iname '*TODO*.md' -type f 2>/dev/null
+      [ -f "$VAULT/wiki/team-tasks.md" ] && echo "$VAULT/wiki/team-tasks.md"
+    fi
+    [ -f "$VAULT/wiki/my-tasks/$LIMITLESS_RUNNER.md" ] && echo "$VAULT/wiki/my-tasks/$LIMITLESS_RUNNER.md"
+    [ -f "$VAULT/wiki/my-tasks/$LIMITLESS_RUNNER-archive.md" ] && echo "$VAULT/wiki/my-tasks/$LIMITLESS_RUNNER-archive.md"
     return 0
   }
   OVERDUE=()
@@ -658,7 +708,10 @@ if [ -r "$VAULT/wiki/index.md" ]; then
   # "assert COVERAGE before cleanliness" forbids. Now the count is asserted and
   # reported, so a green means something.
   SCANNED=$(deadline_scan_files | grep -c . || true)
-  if [ "$SCANNED" -eq 0 ]; then
+  if [ "$SCANNED" -eq 0 ] && ! owner_run; then
+    warn "you have no task file yet — the Hub and your brief read it" \
+         "create wiki/my-tasks/$LIMITLESS_RUNNER.md (your own file; nobody else can write to it)"
+  elif [ "$SCANNED" -eq 0 ]; then
     warn "overdue-deadline scan found NO files to scan — the check is vacuous" \
          "expected wiki/team-tasks.md, wiki/my-tasks/*.md or a wiki/*TODO*.md; verify the globs in tools/limitless-preflight.sh"
   elif [ ${#OVERDUE[@]} -eq 0 ]; then
@@ -741,6 +794,7 @@ if [ -r "$VAULT/wiki/index.md" ]; then
 fi
 echo ""
 
+if owner_run; then   # the vault's upkeep — see "Whose Roll Call is this?" (closes after this section)
 # ── Limitless Stack canonical sync ──────────────────────
 # Hub vault's tools/ and ~/.claude/skills/ MUST match the LimitlessStack
 # canonical at $LIMITLESS_STACK_HOME (default /Users/matthewlavin/LimitlessStack).
@@ -1055,6 +1109,7 @@ else
        "git clone https://github.com/Open-Scaffold-Labs/LimitlessStack.git \$HOME/LimitlessStack  (or set LIMITLESS_STACK_HOME)"
 fi
 echo ""
+fi   # owner_run: canonical sync
 
 # ── [meta] Nightly self-heal (Loop 5 outer loop) ────────
 # The scheduled outer loop (tools/nightly-selfheal.sh via launchd
@@ -1063,6 +1118,7 @@ echo ""
 # silently-broken nightly (Mac asleep for days, launchd unloaded, or a residual
 # finding no corrector can fix) shows up at the NEXT session start instead of
 # rotting unnoticed. Added 2026-07-23 with Loop 5.
+if owner_run; then   # the vault's upkeep
 echo "[meta] Shell safety (set -u static check)"
 # Added 2026-08-24 (claude-anti-patterns #72). The pre-commit gate stops this
 # class entering the repo and the nightly catches it at runtime — but a runtime
@@ -1082,6 +1138,7 @@ else
        "cp \"$LIMITLESS_STACK_HOME/tools/shell-unbound-check.py\" \"$VAULT/tools/\""
 fi
 echo ""
+fi   # owner_run: shell safety
 
 echo "[meta] Task files current?"
 # Added 2026-08-24. Matt, on being shown that 385 "open" boxes contained 222
@@ -1091,7 +1148,12 @@ echo "[meta] Task files current?"
 # Active was prose that already existed in wiki/log.md). This makes all of that
 # visible EVERY Roll Call instead of once every four months.
 if [ -f "$VAULT/tools/task-file-check.py" ]; then
-  if task_out="$(python3.11 "$VAULT/tools/task-file-check.py" --quiet 2>&1)"; then
+  TFC_ARGS=(--quiet)
+  if [ -n "$LIMITLESS_RUNNER" ]; then
+    TFC_ARGS+=(--for "$LIMITLESS_RUNNER")
+    owner_run && TFC_ARGS+=(--team)
+  fi
+  if task_out="$(python3.11 "$VAULT/tools/task-file-check.py" "${TFC_ARGS[@]}" 2>&1)"; then   # unbound-ok: TFC_ARGS always holds --quiet
     ok "task files current (audited, no stale/duplicate/closed-section drift)"
   else
     while IFS= read -r tline; do
@@ -1106,6 +1168,7 @@ else
 fi
 echo ""
 
+if owner_run; then   # the vault's upkeep: nightly job, trust anchors, lesson review
 echo "[meta] Nightly self-heal (Loop 5)"
 NSH_LABEL="com.openscaffold.nightly-selfheal"
 NSH_PLIST="$HOME/Library/LaunchAgents/$NSH_LABEL.plist"
@@ -1247,6 +1310,7 @@ else
   skip "anti-pattern-candidates.py not present — skipping rec #5 trigger"
 fi
 echo ""
+fi   # owner_run: nightly, trust anchors, lesson review
 
 # ── [4/7] Pinecone ──────────────────────────────────────
 echo "[4/7] Pinecone (semantic memory)"
@@ -1254,7 +1318,14 @@ if ! check_enabled "pinecone"; then
   echo "  ⊘ not enabled in this project's manifest (.limitless-project.py CHECKS) — skipping"
 elif PINECONE_API_KEY_VAL="$(security find-generic-password -s pinecone-api-key -w 2>/dev/null || true)"; [ -z "$PINECONE_API_KEY_VAL" ]; then
   begin_tool "pinecone" "Pinecone" "Memory"
-  bad "no Pinecone API key in Keychain" "security add-generic-password -s pinecone-api-key -a matt -w <key>"
+  if owner_run; then
+    bad "no Pinecone API key in Keychain" "security add-generic-password -s pinecone-api-key -a pinecone -w <key>"
+  else
+    warn "no Pinecone API key in your Keychain — semantic search is off for you" "ask the vault owner for the key, then: security add-generic-password -s pinecone-api-key -a pinecone -w <key>"
+  fi
+elif [ -z "$LIMITLESS_PINECONE_INDEX" ] && [ "$LIMITLESS_HAS_MANIFEST" = "true" ]; then
+  begin_tool "pinecone" "Pinecone" "Memory"
+  warn "no Pinecone index named in this vault's manifest" "add PINECONE = {'index': '<your-index>'} to .limitless-project.py"
 else
   begin_tool "pinecone" "Pinecone" "Memory"
   PINECONE_STATS=$(PINECONE_API_KEY="$PINECONE_API_KEY_VAL" python3.11 -c "
@@ -1262,7 +1333,7 @@ import os, sys, json
 try:
     from pinecone import Pinecone
     pc = Pinecone(api_key=os.environ['PINECONE_API_KEY'])
-    s = pc.Index('openscaffold').describe_index_stats()
+    s = pc.Index('${LIMITLESS_PINECONE_INDEX:-openscaffold}').describe_index_stats()
     print(json.dumps({'vectors': s.get('total_vector_count'), 'namespaces': list(s.get('namespaces', {}).keys())}))
 except Exception as e:
     print(json.dumps({'error': str(e)}))
@@ -1327,7 +1398,9 @@ except Exception as e:
   fi
 
   # Sync freshness — find the newest wiki file and see if it pre-dates the last sync log
-  WIKI_NEWEST_TS=$(find "$VAULT/wiki" "$VAULT/CLAUDE.md" -name '*.md' -type f -exec stat -f '%m' {} \; 2>/dev/null | sort -n | tail -1)
+  WIKI_NEWEST_TS=""
+  # Keeping the shared index in sync is the vault owner's job (their Roll Call).
+  owner_run && WIKI_NEWEST_TS=$(find "$VAULT/wiki" "$VAULT/CLAUDE.md" -name '*.md' -type f -exec stat -f '%m' {} \; 2>/dev/null | sort -n | tail -1)
   if [ -n "$WIKI_NEWEST_TS" ]; then
     WIKI_AGE_HOURS=$(( (NOW_TS - WIKI_NEWEST_TS) / 3600 ))
     if [ -f "$VAULT/tools/.pinecone-sync-state.json" ]; then
@@ -1403,6 +1476,7 @@ else
     warn "auth check output unparseable" "notebooklm auth check --test · invoke Skill(notebooklm) if unclear"
   fi
 
+  if owner_run; then   # the notebooks' upkeep — coverage, freshness, duplicates, capacity
   # Notebook coverage — every notebook in NotebookLM must be in NOTEBOOK_ROUTES,
   # DEFAULT_ROUTE, REMINDER_NOTEBOOK_ID, or IGNORED_NOTEBOOKS. Catches the
   # "TheMatch silently unrouted" failure mode (2026-04-29). Single source of
@@ -1821,6 +1895,36 @@ except Exception:
       warn "notebook capacity check failed (exit=$CAPS_EXIT)" "$CAPS_OUT"
     fi
   fi
+  else
+    # A teammate: the notebooks' upkeep is the owner's Roll Call. What IS yours:
+    # can your Google account open every notebook this vault uses? Without it,
+    # the session-start reminder query and every refresh fail for you.
+    if echo "$AUTH_OUT" | grep -q "Authentication Check" && ! echo "$AUTH_OUT" | grep -q "fail"; then
+      NB_ACC_DIR=$(mktemp -d "${TMPDIR:-/tmp}/preflight-access.XXXXXX")
+      NB_ACC_PIDS=()
+      nb_acc_n=0
+      for nb_item in $LIMITLESS_DEDUPE_NOTEBOOKS; do
+        nb_short="${nb_item%%:*}"; nb_lab="${nb_item#*:}"
+        ( notebooklm source list --notebook "$nb_short" --json > /dev/null 2>&1; echo $? > "$NB_ACC_DIR/$nb_lab.exit" ) &
+        NB_ACC_PIDS+=($!)
+        nb_acc_n=$((nb_acc_n+1))
+      done
+      for nb_pid in "${NB_ACC_PIDS[@]:-}"; do [ -n "$nb_pid" ] && wait "$nb_pid" 2>/dev/null; done
+      nb_denied=""
+      for nb_item in $LIMITLESS_DEDUPE_NOTEBOOKS; do
+        nb_lab="${nb_item#*:}"
+        [ "$(cat "$NB_ACC_DIR/$nb_lab.exit" 2>/dev/null || echo 1)" = "0" ] || nb_denied="$nb_denied $nb_lab"
+      done
+      rm -rf "$NB_ACC_DIR"
+      if [ "$nb_acc_n" -eq 0 ]; then
+        skip "no notebooks declared in this vault's manifest"
+      elif [ -z "$nb_denied" ]; then
+        ok "your Google account can open all $nb_acc_n of this vault's notebooks"
+      else
+        warn "your Google account can't open:$nb_denied" "ask the vault owner to share them with your Google account as Editor, then re-run Roll Call"
+      fi
+    fi
+  fi
 fi
 echo ""
 
@@ -1918,7 +2022,7 @@ if [ -r "$ANTIPATTERNS_FILE" ]; then
     # bucket hasn't been re-verified since.
     AP_REL="wiki/synthesis/claude-anti-patterns.md"
     AP_VERIFIED_AT=0
-    if [ -f "$REMINDER_STATE" ]; then
+    if owner_run && [ -f "${REMINDER_STATE:-}" ]; then
       AP_VERIFIED_AT=$(python3 -c "
 import json, sys
 try:
@@ -1930,7 +2034,9 @@ except Exception:
 " "$REMINDER_STATE" "$AP_REL" 2>/dev/null)
       AP_VERIFIED_AT=${AP_VERIFIED_AT:-0}
     fi
-    if [ "$AP_AGE_DAYS" -gt 7 ]; then
+    if ! owner_run; then
+      ok "$AP_COUNT anti-patterns on file — read them before substantive work"
+    elif [ "$AP_AGE_DAYS" -gt 7 ]; then
       ok "$AP_COUNT anti-patterns on file (last edit ${AP_AGE_DAYS}d ago)"
     elif [ "$AP_VERIFIED_AT" -ge "$AP_TS" ]; then
       ok "$AP_COUNT anti-patterns on file (edited ${AP_AGE_DAYS}d ago, reminder bucket re-verified after edit)"

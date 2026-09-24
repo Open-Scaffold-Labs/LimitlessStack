@@ -24,6 +24,8 @@ Modes:
   authorship-guard.py --range A..B      every commit in a range (CI, one push)
   --json                                machine-readable result (CI)
   --config <file>                       use this authors file instead of the repo's (replays, tests)
+  authorship-guard.py --whoami          print who is committing here (GitHub login from .authors.json,
+                                        or "unknown <email>"); prints nothing when the rule is off
 Exit: 0 clean / not enabled · 1 violation(s) · 2 could not run (reported, never silent).
 """
 import fnmatch
@@ -249,6 +251,11 @@ def main(argv):
     try:
         root = repo_root()
         os.chdir(root)
+        if "--whoami" in argv:
+            cfg = load_config(root)
+            if cfg is not None:
+                print(person_for(git("config", "user.email", check=False).strip(), cfg))
+            return 0
         if "--staged" in argv:
             cfg = load_config(root)
             if cfg is None:

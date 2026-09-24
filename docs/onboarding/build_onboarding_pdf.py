@@ -482,7 +482,10 @@ def content():
                "vault only you write to."))
     f.append(P("<b>1. Turn on the rule.</b> Copy <font face='Courier'>~/LimitlessStack/templates/authors.example.json</font> "
                "to <font face='Courier'>.authors.json</font> at the vault root and list each person's GitHub "
-               "login with every email they commit with. Commit it."))
+               "login with every email they commit with. In <font face='Courier'>.limitless-project.py</font> set "
+               "<font face='Courier'>VAULT_OWNER = \"&lt;your-login&gt;\"</font>: the vault's upkeep checks then run on "
+               "your Roll Call, and each teammate's Roll Call shows only their own machine, sign-ins and task file. "
+               "Commit both."))
     f.append(P("<b>2. Each person, on their own computer:</b> clone the vault, then run "
                "<font face='Courier'>bash tools/install-git-hooks.sh</font>. From then on a commit that changes "
                "someone else's lines, their <font face='Courier'>members/&lt;login&gt;/</font> folder or their "
