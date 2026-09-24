@@ -1,7 +1,7 @@
 # Authorship safety net — the backstop behind the commit check (tools/authorship-guard.py).
 #
 # The rule: anyone may ADD to this shared vault; only a line's author may change or remove
-# it; members/<login>/ and wiki/my-tasks/<login>.md belong to that person. The commit check
+# it (anyone may tick an unticked box in the files under tick_anyone); members/<login>/ and wiki/my-tasks/<login>.md belong to that person. The commit check
 # enforces this on every commit made with the stack's tools. This job catches anything that
 # skipped it (e.g. `git commit --no-verify`, or an edit made outside the stack) and opens an
 # issue assigned to the person whose writing was changed, so THEY decide: close it to accept

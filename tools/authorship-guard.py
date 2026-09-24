@@ -17,6 +17,10 @@ Who owns a line:
   * Not owned at all: machine-written files (`exempt_paths`), lines inside a
     `BEGIN GENERATED` ... `END GENERATED` block, and lines matching
     `exempt_line_patterns` (e.g. a page's `updated:` date).
+  * Ticking a box: in the files listed under `tick_anyone` (e.g. the shared team task
+    list), anyone may tick an unticked box on someone else's line — `[ ]` to `[x]` and
+    nothing else on that line. Unticking, or any other change to the line, stays the
+    author's (Matt, 2026-09-24).
 
 Modes:
   authorship-guard.py --staged          the commit being made (pre-commit hook)
@@ -142,6 +146,40 @@ def removed_old_lines(base, target, path):
     return lines
 
 
+TICK_BOX = re.compile(r"^(\s*(?:[-*+]|\d+[.)])\s+)\[ \]")
+
+
+def pure_ticks(base, target, path):
+    """Old-side line numbers whose ONLY change is an unticked box being ticked ([ ] -> [x]).
+
+    Reads the -U0 diff: within a hunk the removed and added lines pair up in order when
+    their counts match. A pair counts as a tick only if the new line is exactly the old
+    line with its leading `[ ]` turned into `[x]` (or `[X]`)."""
+    args = ["diff", "--no-renames", "-U0"]
+    args += ([base, target] if target else ["--cached", base])
+    diff = git(*args, "--", path)
+    ticks = set()
+    for hunk in re.split(r"^(?=@@ )", diff, flags=re.M):
+        m = re.match(r"@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@", hunk)
+        if not m:
+            continue
+        body = hunk.split("\n")[1:]
+        old = [l[1:] for l in body if l.startswith("-")]
+        new = [l[1:] for l in body if l.startswith("+")]
+        if len(old) != len(new):
+            continue
+        start = int(m.group(1))
+        for i, (o, n) in enumerate(zip(old, new)):
+            b = TICK_BOX.match(o)
+            if b and n in (b.group(1) + "[x]" + o[b.end():], b.group(1) + "[X]" + o[b.end():]):
+                ticks.add(start + i)
+    return ticks
+
+
+def tick_ok(path, cfg):
+    return any(fnmatch.fnmatch(path, pat) for pat in cfg.get("tick_anyone", []))
+
+
 def is_binary(base, target, path):
     args = ["diff", "--no-renames", "--numstat"]
     args += ([base, target] if target else ["--cached", base])
@@ -208,8 +246,9 @@ def check(base, target, actor, cfg):
         except RuntimeError:
             continue
         gen = generated_lines(old_text)
+        ticks = pure_ticks(base, target, path) if tick_ok(path, cfg) else set()
         owners = {}
-        for n, (email, text) in blame(base, path, [n for n in old_lines if n not in gen]).items():
+        for n, (email, text) in blame(base, path, [n for n in old_lines if n not in gen and n not in ticks]).items():
             if any(p.search(text) for p in line_patterns):
                 continue
             who = person_for(email, cfg)

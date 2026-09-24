@@ -26,6 +26,7 @@ setup() {
   cat > .authors.json <<'EOF'
 {"people": {"matt": {"emails": ["matt@example.com"]}, "dale": {"emails": ["dale@example.com"]}},
  "exempt_paths": ["tools/.notebooklm-*-state.json"],
+ "tick_anyone": ["wiki/team-tasks.md"],
  "exempt_line_patterns": ["^updated: "]}
 EOF
   mkdir -p wiki/my-tasks tools members/dale
@@ -33,6 +34,8 @@ EOF
   printf '{"a": 1}\n' > tools/.notebooklm-wiki-state.json
   printf 'intro\n<!-- BEGIN GENERATED INDEX -->\ngen 1\n<!-- END GENERATED -->\n' > wiki/ap.md
   printf 'matt task\n' > wiki/my-tasks/matt.md
+  printf -- '- [ ] matt task A\n- [ ] matt task B\n- [x] matt done C\n  - [ ] matt sub D\n' > wiki/team-tasks.md
+  printf -- '- [ ] matt box elsewhere\n' > wiki/notes.md
   as_matt add -A && as_matt commit -qm "matt base"
   printf 'dale line 1\n' >> wiki/page.md
   printf 'dale task\n' > wiki/my-tasks/dale.md
@@ -74,6 +77,18 @@ run_cases() {
   printf 'rewritten\n' > wiki/latin1.md;                     expect "BLOCK: rewriting someone else's non-UTF-8 line" 1 "$(staged as_matt)"
   printf 'x' >> wiki/dale.png;                              expect "BLOCK: changing a binary file someone else added" 1 "$(staged as_matt)"
   printf 'x' >> wiki/dale.png;                              expect "owner may change their own binary file" 0 "$(staged as_dale)"
+  sed -i.b 's/- \[ \] matt task A/- [x] matt task A/' wiki/team-tasks.md; rm -f wiki/team-tasks.md.b
+                                                             expect "tick: anyone may tick someone else's box on the team list" 0 "$(staged as_dale)"
+  sed -i.b 's/\[ \] matt task/[x] matt task/; s/\[ \] matt sub D/[X] matt sub D/' wiki/team-tasks.md; rm -f wiki/team-tasks.md.b
+                                                             expect "tick: several boxes at once, nested, capital X" 0 "$(staged as_dale)"
+  sed -i.b 's/- \[ \] matt task A/- [x] matt task A — done by Dale/' wiki/team-tasks.md; rm -f wiki/team-tasks.md.b
+                                                             expect "BLOCK: ticking AND changing the words" 1 "$(staged as_dale)"
+  sed -i.b 's/- \[x\] matt done C/- [ ] matt done C/' wiki/team-tasks.md; rm -f wiki/team-tasks.md.b
+                                                             expect "BLOCK: unticking someone else's box" 1 "$(staged as_dale)"
+  sed -i.b 's/- \[ \] matt task A/- [x] matt task A/; /matt task B/d' wiki/team-tasks.md; rm -f wiki/team-tasks.md.b
+                                                             expect "BLOCK: a tick next to a deleted line" 1 "$(staged as_dale)"
+  sed -i.b 's/- \[ \] matt box/- [x] matt box/' wiki/notes.md; rm -f wiki/notes.md.b
+                                                             expect "BLOCK: ticking a box in a file not on the tick list" 1 "$(staged as_dale)"
   sed -i.b 's/matt line 1/dale rewrote/' wiki/page.md; rm -f wiki/page.md.b
   as_dale add -A; as_dale commit -qm "dale rewrites matt" --no-verify
   "$PY" "$G" --commit HEAD >/dev/null 2>&1;                 expect "CI mode: finds a violation that skipped the hook" 1 "$?"
@@ -100,6 +115,14 @@ REAL_PASS=$PASS; FAILN=0
 run_cases "$W/mutant.py" >/dev/null
 MUT_RED=$FAILN; PASS=$REAL_PASS; FAILN=$REAL_FAIL
 if [ "$MUT_RED" -gt 0 ]; then ok "the tests catch a disabled guard ($MUT_RED cases went red)"; else bad "a disabled guard passed every case — the tests cannot fail"; fi
+for m in 's/if b and n in (/if b or n in (/' 's/if tick_ok(path, cfg) else set()/if True else set()/'; do
+  sed "$m" "$GUARD" > "$W/mutant2.py"
+  cmp -s "$GUARD" "$W/mutant2.py" && { bad "could not build tick mutant: $m"; continue; }
+  REAL_PASS=$PASS; REAL_FAIL=$FAILN; FAILN=0
+  run_cases "$W/mutant2.py" >/dev/null
+  MUT_RED=$FAILN; PASS=$REAL_PASS; FAILN=$REAL_FAIL
+  if [ "$MUT_RED" -gt 0 ]; then ok "the tests catch a loosened tick rule ($MUT_RED went red: $m)"; else bad "a loosened tick rule passed every case: $m"; fi
+done
 
 echo ""
 echo "  $PASS passed, $FAILN failed"
