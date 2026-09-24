@@ -37,8 +37,8 @@ The script checks each of the seven tools:
 3. **Obsidian** — `wiki/index.md` readable, page count sane, git clean (or count uncommitted files).
 4. **Pinecone** — API key in Keychain, `describe_index_stats` works, last sync newer than the newest wiki edit.
 5. **NotebookLM** — `notebooklm auth check --test` passes; the default wiki notebook is fresh; the reminder notebook's sources are newer than the files they mirror (IDs from the manifest).
-6. **Hub Workspace** — optional; checked only when the manifest's `SERVICES` names a health URL.
-7. **Paperclip** — optional; checked only when the manifest's `SERVICES` names a health URL.
+6. **Hub Workspace** — nothing to check from the vault; its agent runtime (Hermes) is health-checked when the manifest's `SERVICES` names `hermes_health_url`.
+7. **Paperclip** — health-checked when the manifest's `SERVICES` names `paperclip_health_url`.
 
 **In a shared vault** (one with `.authors.json` and a `VAULT_OWNER` in the manifest), Roll Call is per person: whoever runs it sees only their own machine, their own sign-ins and their own task file (`wiki/my-tasks/<login>.md`). The vault's upkeep — tools kept in step with LimitlessStack, the nightly job, the lesson review, the shared task list, the notebooks' freshness and capacity, the Pinecone sync — appears only on the owner's Roll Call. A teammate's Roll Call also checks that their Google account can open every notebook the vault uses.
 
