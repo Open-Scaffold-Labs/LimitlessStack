@@ -216,7 +216,8 @@ def content():
                      "commands on your computer. Attach this file and "
                      "say: <i>\"Set up my own Limitless Stack by following this guide. Ask me for my "
                      "details first.\"</i> Your agent interviews you, runs the commands on your computer, "
-                     "and checks each step before moving on. You can also follow it by hand."))
+                     "and checks each step before moving on. You can also follow it by hand. "
+                     "<b>Using Grok Bot?</b> Set it up with section 09 first."))
     f.append(P("Your details — what your agent will ask you first", h2))
     f.append(table(["Detail", "Used for", "Example"], [
         ["Your name", "The [YOUR NAME] markers in your CLAUDE.md", "Sam"],
@@ -499,8 +500,48 @@ def content():
                "Run it once by hand to prove it works."))
     f.append(check("<font face='Courier'>bash tools/test-authorship-guard.sh</font> ends with \"0 failed\"."))
 
-    # 09 ─ Troubleshooting
-    f += section("09", "Troubleshooting", "What Roll Call and the tools tell you, and what to do")
+    # 09 ─ Grok Bot
+    f += section("09", "Using Grok Bot", "xAI's always-on agents, working on your own Mac")
+    f.append(P("Grok Bot runs on xAI's own cloud computer. Your stack lives on your Mac: your vault, your "
+               "Keychain, your NotebookLM sign-in. So Grok Bot has to run the stack's commands on your Mac, "
+               "and it needs the stack's rules handed to it. Two steps make that work."))
+    f += step(1, "Let it run commands on your Mac", [
+        P("Install Grok Bot's desktop app on your Mac: commands on your own computer go through it. In its "
+          "settings (Settings, General), set <b>Execution on Local Computer</b> to <b>Ask every time</b>: you see "
+          "each command before it runs and approve it. Move to <i>Always allow</i> only once you trust the routine."),
+        P("Type passwords and sign-in codes yourself, never into the chat. Keep your keys in your Mac's Keychain, "
+          "not on the Bot's cloud computer, which every Bot on your account can use."),
+    ])
+    f += step(2, "Give it the stack's rules as a skill", [
+        P("Don't count on Grok Bot reading <font face='Courier'>AGENTS.md</font>, <font face='Courier'>CLAUDE.md</font> "
+          "or the Claude skills by itself; its docs don't say it does. Save this as a private skill (Marketplace, Your "
+          "plugins, Manage plugins and skills), filling in the two &lt;...&gt; values, and start any work in your "
+          "vault by typing <font face='Courier'>/</font> and choosing it:"),
+        code([
+            "Name: Limitless Stack session",
+            "When to use: before any work in my vault at <vault path on my Mac>.",
+            "Access: Execution on Local Computer (my Mac), inside the vault folder.",
+            "Steps:",
+            "1. On my local computer: cd '<vault path on my Mac>'",
+            "2. Read AGENTS.md, then CLAUDE.md in full, then",
+            "   members/<my-github-login>/CLAUDE.md if it exists, and follow them.",
+            "   Where they say Skill(...) or Desktop Commander, run the same",
+            "   command directly on my local computer.",
+            "3. Run Roll Call: bash tools/limitless-preflight.sh",
+            "   0 = READY. 1 = WARN, tell me. 2 = BLOCK, stop and tell me.",
+            "4. Do the task.",
+            "5. Before finishing: the end-of-session checklist in CLAUDE.md.",
+            "Validate: Roll Call printed a verdict; the checklist is done.",
+            "Return: the Roll Call verdict, what changed, anything left open.",
+            "Needs my approval: every commit or push, and any command outside the vault.",
+        ]),
+        check("run the skill in a new chat: Grok Bot asks to run Roll Call on your Mac, and reports READY, WARN or BLOCK."),
+    ])
+    f.append(callout("<b>Sharing a vault?</b> The same skill works in a teammate's copy of a shared vault. Their "
+                     "Roll Call shows only their own machine, sign-ins and task file (section 08)."))
+
+    # 10 ─ Troubleshooting
+    f += section("10", "Troubleshooting", "What Roll Call and the tools tell you, and what to do")
     f.append(table(["You see", "Do this"], [
         ["BLOCK: NotebookLM auth failing", "Run notebooklm login on your computer, then notebooklm auth check --test."],
         ["\"No Pinecone index configured\"", "Add PINECONE = {\"index\": \"<your-index>\"} to .limitless-project.py (step 7)."],
@@ -510,6 +551,7 @@ def content():
         ["Tools out of sync with LimitlessStack", "You edited a tool in one place. Copy it to the other, or re-run install.sh."],
         ["overview.md placeholder warning", "Write your overview and give it real dates (step 5)."],
         ["Your agent can't run notebooklm", "It must run on your own computer, where you signed in — not inside a cloud sandbox."],
+        ["Grok Bot can't reach your Mac", "Allow Execution on Local Computer in its settings; check its desktop app is installed and open on your Mac."],
     ], [0.36, 0.64]))
     f.append(Spacer(1, 14))
     f.append(P("The Limitless Stack is one integrated system: the value compounds across all seven "
