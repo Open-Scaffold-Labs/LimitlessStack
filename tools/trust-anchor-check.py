@@ -466,6 +466,73 @@ def check_canonical_facts():
                 f"~9-14 sites; clean them in the same session you register it, or the next "
                 f"session inherits a wall of warnings.")
 
+# -- Check H -- one shared rules file per repo, linked into every checkout -------
+# Added 2026-09-25. A repo whose CLAUDE.md is kept OUT of git (OpenFirehouse: the
+# repo is bound for public release) has no way to propagate a rule between its
+# checkouts, so each checkout grew its own copy and they drifted: measured that day,
+# the two copies one session loaded each lacked a ruling the other carried. The fix
+# is ONE real file with every other checkout's CLAUDE.md a link to it. This check
+# keeps it that way: a checkout with no link (a fresh `git worktree add`) or with its
+# own copy (a tool that replaced the link with a file) is a finding.
+# Project data lives in the vault's .limitless-project.py as
+#   SHARED_RULES_FILES = [{"canonical": "~/repo/CLAUDE.md", "repo": "~/repo",
+#                          "extra_checkouts": ["~/repo-clone"]}]
+# Absent or empty -> SKIP, so any other project installing this tool is unaffected.
+def _manifest_value(name):
+    path = os.path.join(VAULT, ".limitless-project.py")
+    if not os.path.isfile(path):
+        return None
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_limitless_manifest", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return getattr(mod, name, None)
+
+
+def check_shared_rules():
+    import subprocess
+    entries = _manifest_value("SHARED_RULES_FILES") or []
+    if not entries:
+        note_skip("shared rules files: none configured in .limitless-project.py")
+        return
+    for e in entries:
+        canon = os.path.expanduser(e["canonical"])
+        repo = os.path.expanduser(e["repo"])
+        if not os.path.lexists(canon):
+            note_skip(f"shared rules file {canon} is not on this machine")
+            continue
+        if os.path.islink(canon):
+            add(f"{canon} is a link — the shared rules file must be the one REAL file",
+                "replace it with the real file and point the checkouts at it")
+            continue
+        if os.path.getsize(canon) == 0:
+            add(f"{canon} is empty", "restore it from ~/OSL-Reference/claude-md-backups-* or a checkout")
+            continue
+        try:
+            out = subprocess.run(["git", "-C", repo, "worktree", "list", "--porcelain"],
+                                 capture_output=True, text=True, timeout=20, check=True).stdout
+        except Exception as exc:
+            note_skip(f"shared rules file {canon}: cannot list {repo}'s checkouts ({exc})")
+            continue
+        trees = [ln[len("worktree "):] for ln in out.splitlines() if ln.startswith("worktree ")]
+        trees += [os.path.expanduser(p) for p in e.get("extra_checkouts", [])]
+        home = os.path.realpath(os.path.dirname(canon))
+        real_canon = os.path.realpath(canon)
+        for t in trees:
+            if not os.path.isdir(t) or os.path.realpath(t) == home:
+                continue
+            f = os.path.join(t, "CLAUDE.md")
+            if not os.path.lexists(f):
+                add(f"{t} has no CLAUDE.md — a session opened there gets none of the rules",
+                    f"ln -s {canon} {f}")
+            elif not os.path.islink(f):
+                add(f"{f} is its own copy, not a link to {canon} — copies drift apart",
+                    f"fold any lines only it has into {canon}, then: ln -sf {canon} {f}")
+            elif os.path.realpath(f) != real_canon:
+                add(f"{f} links to {os.path.realpath(f)}, not to {canon}",
+                    f"ln -sf {canon} {f}")
+
+
 def main():
     # Per-repo allowlists: only paths that DEFINITELY live in that repo. Vault
     # owns tools/ + the installed skills; the Hub owns its app source and its
@@ -483,6 +550,7 @@ def main():
         ("phantom routes",    check_phantom_routes,    ()),
         ("prose counts",      check_prose_counts,      ()),
         ("canonical facts",   check_canonical_facts,   ()),
+        ("shared rules files", check_shared_rules,     ()),
     )
     evaluated = 0
     try:
