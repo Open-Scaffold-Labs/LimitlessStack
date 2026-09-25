@@ -122,6 +122,10 @@ cp "$SCRIPT_DIR/pinecone/pinecone-search.py" "$TARGET/tools/pinecone-search.py"
 # NotebookLM operational tools
 cp "$SCRIPT_DIR/tools/notebooklm-wiki-refresh.py" "$TARGET/tools/notebooklm-wiki-refresh.py"
 cp "$SCRIPT_DIR/tools/notebooklm-dedupe.py" "$TARGET/tools/notebooklm-dedupe.py"
+# Sources outside the vault + source accounting (2026-09-25); the refresh imports it,
+# the preflight calls its --check. Its fence runs offline.
+cp "$SCRIPT_DIR/tools/notebooklm_external.py" "$TARGET/tools/notebooklm_external.py"
+cp "$SCRIPT_DIR/tools/test-notebooklm-external.py" "$TARGET/tools/test-notebooklm-external.py"
 # Session lifecycle scripts
 cp "$SCRIPT_DIR/tools/session-bootstrap.sh" "$TARGET/tools/session-bootstrap.sh"
 cp "$SCRIPT_DIR/tools/limitless-preflight.sh" "$TARGET/tools/limitless-preflight.sh"

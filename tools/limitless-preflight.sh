@@ -1883,6 +1883,34 @@ except Exception:
     rm -rf "$SWEEP_DIR"
   fi
 
+  # Sources outside the vault + an account of every source (added 2026-09-25).
+  # tools/notebooklm_external.py keeps files like the OpenFirehouse repo's rules file
+  # current in their notebook, and for the notebooks in NOTEBOOKLM_ACCOUNTED reports any
+  # source nobody manages. It exists because sessions uploaded those files by hand and a
+  # stale copy was left beside the current one. A STALE finding names the refresh command,
+  # so the nightly self-heal fixes it unattended; an UNACCOUNTED one needs a person.
+  if command -v python3.11 >/dev/null 2>&1 && [ -f "$VAULT/tools/notebooklm_external.py" ]; then
+    EXT_OUT=$(cd "$VAULT" && python3.11 tools/notebooklm_external.py --check 2>&1)
+    EXT_RC=$?
+    if [ "$EXT_RC" -eq 0 ]; then
+      ok "notebooklm sources outside the vault are current and every source is accounted for"
+    elif [ "$EXT_RC" -eq 1 ]; then
+      for ext_label in $(printf '%s\n' "$EXT_OUT" | awk -F'\t' '$1=="STALE"{print $2}' | sort -u); do
+        ext_what=$(printf '%s\n' "$EXT_OUT" | awk -F'\t' -v l="$ext_label" '$1=="STALE" && $2==l {printf "%s%s (%s)", sep, $3, $4; sep="; "}')
+        warn "notebooklm $ext_label: file(s) outside the vault need a sync — $ext_what" \
+             "python3.11 tools/notebooklm-wiki-refresh.py --only $ext_label"
+      done
+      for ext_nb in $(printf '%s\n' "$EXT_OUT" | awk -F'\t' '$1=="UNACCOUNTED"{print $2}' | sort -u); do
+        ext_what=$(printf '%s\n' "$EXT_OUT" | awk -F'\t' -v n="$ext_nb" '$1=="UNACCOUNTED" && $2==n {printf "%s%s [%s]", sep, $4, substr($3,1,8); sep="; "}')
+        warn "notebooklm $ext_nb: source(s) nobody manages — $ext_what" \
+             "list each in NOTEBOOKLM_EXTERNAL or NOTEBOOKLM_FROZEN in .limitless-project.py, or (with Matt's okay) remove it: notebooklm source delete <id> -n $ext_nb -y"
+      done
+    else
+      warn "notebooklm source accounting could not run ($(printf '%s' "$EXT_OUT" | tail -1 | cut -c1-120))" \
+           "python3.11 tools/notebooklm_external.py --check"
+    fi
+  fi
+
   # Join the capacity check backgrounded before the freshness block
   # (2026-08-21). Interpretation lives HERE, in the main shell — ok/warn
   # counter increments would not survive a background subshell. Guarded so

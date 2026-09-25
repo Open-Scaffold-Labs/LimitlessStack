@@ -88,3 +88,17 @@ SYNC_CHECK = {
     # (default ~/LimitlessStack). Set that variable if you cloned it elsewhere.
     "limitless_stack_home": "~/LimitlessStack",
 }
+
+# ── Optional: NotebookLM sources that live OUTSIDE the vault (added 2026-09-25) ──────────
+# Files a notebook should carry that are not wiki pages (a repo's rules file, its changelog).
+# tools/notebooklm_external.py keeps them current through the refresh tool: each gets a
+# DISTINCT title, is re-uploaded only when its content changes, and any copy titled with one
+# of hand_titles (a hand upload) is removed once the managed copy is verified — its text is
+# saved to NOTEBOOKLM_REMOVED_BACKUP first. Owner only. Leave these out if you have none.
+# NOTEBOOKLM_EXTERNAL = [
+#     {"path": "~/my-repo/CLAUDE.md", "label": "<route label>",
+#      "title": "my-repo-rules-CLAUDE.md", "hand_titles": ["CLAUDE.md"]},
+# ]
+# NOTEBOOKLM_FROZEN = {"<notebook id prefix>": ["<title of a dated source kept on purpose>"]}
+# NOTEBOOKLM_ACCOUNTED = ["<notebook id prefix>"]   # every source there must be managed or frozen
+# NOTEBOOKLM_REMOVED_BACKUP = "~/somewhere-private/notebooklm-removed"

@@ -188,6 +188,11 @@ def route_for_label(label: str) -> tuple[str, str, str]:
 # means it'll auto-upload on next sync; removing one does NOT auto-delete
 # (sync_reminder never deletes — reminder scope is curated, deletes are manual).
 REMINDER_NOTEBOOK_ID = "ab4b7ccb"
+try:
+    import notebooklm_external as _EXTERNAL   # sources outside the vault (2026-09-25)
+except ImportError:
+    _EXTERNAL = None
+
 REMINDER_STATE_FILE = TOOLS / ".notebooklm-reminder-state.json"
 REMINDER_FILES = [
     "CLAUDE.md",
@@ -1754,6 +1759,11 @@ def main():
                 seed_route(nbid, label, display, files, args.dry_run)
             else:
                 sync_route(nbid, label, display, files, args.dry_run, force=args.force)
+                # Files outside the vault that this notebook should carry (the repo's rules
+                # file, its changelog …) — see tools/notebooklm_external.py. Added 2026-09-25
+                # so no session uploads them by hand again.
+                if _EXTERNAL is not None:
+                    _EXTERNAL.sync_externals(sys.modules[__name__], label, args.dry_run, force=args.force)
 
     if do_reminder:
         if args.seed:
