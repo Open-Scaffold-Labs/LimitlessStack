@@ -489,6 +489,39 @@ def _manifest_value(name):
     return getattr(mod, name, None)
 
 
+def _norm_rule(s):
+    """Quotes are compared ignoring blockquote '> ' prefixes and line wrapping."""
+    s = re.sub(r"(?m)^\s*>\s?", "", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _check_rulings_manifest(canon, man):
+    text = _read(canon) or ""
+    lines = set(text.split("\n"))
+    flat = _norm_rule(text)
+    missing = []
+    with open(man, encoding="utf-8") as fh:
+        for raw in fh:
+            raw = raw.rstrip("\n")
+            if not raw.strip() or raw.startswith("#"):
+                continue
+            kind, _, val = raw.partition("\t")
+            if kind == "H":
+                ok = val in lines
+            elif kind == "Q":
+                ok = _norm_rule(val) in flat
+            else:
+                add(f"{man}: unreadable line {raw[:60]!r}", "each line is 'H<TAB>heading' or 'Q<TAB>quote'")
+                continue
+            if not ok:
+                missing.append(val)
+    for v in missing[:10]:
+        add(f"{canon} lost a listed ruling: {v[:110]}",
+            f"restore it from the history file; if Matt superseded it, remove its line from {man}")
+    if len(missing) > 10:
+        add(f"{canon} lost {len(missing) - 10} more listed rulings", f"diff it against the history file next to {man}")
+
+
 def check_shared_rules():
     import subprocess
     entries = _manifest_value("SHARED_RULES_FILES") or []
@@ -508,6 +541,20 @@ def check_shared_rules():
         if os.path.getsize(canon) == 0:
             add(f"{canon} is empty", "restore it from ~/OSL-Reference/claude-md-backups-* or a checkout")
             continue
+        # Size limit: the file is loaded in full into every session, twice when two of its
+        # checkouts are connected. Added 2026-09-25 with the trim from 354 KB.
+        limit = e.get("max_bytes")
+        size = os.path.getsize(canon)
+        if limit and size > limit:
+            add(f"{canon} is {size:,} bytes, over its {limit:,}-byte limit (it loads in full into every session)",
+                "move stories and old corrections to the history file named at the top of it; keep each ruling short")
+        # Rulings manifest: every listed heading (H) and quote of Matt's (Q) must still be in the file.
+        man = os.path.expanduser(e.get("manifest") or "")
+        if man:
+            if os.path.isfile(man):
+                _check_rulings_manifest(canon, man)
+            else:
+                note_skip(f"rulings manifest {man} is not on this machine")
         try:
             out = subprocess.run(["git", "-C", repo, "worktree", "list", "--porcelain"],
                                  capture_output=True, text=True, timeout=20, check=True).stdout
