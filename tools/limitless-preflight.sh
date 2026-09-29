@@ -135,6 +135,22 @@ try:
     pcm = getattr(m, 'PINECONE', {}) or {}
     print('PINECONE_INDEX=' + str(pcm.get('index', '') or ''))
     nb = getattr(m, 'NOTEBOOKLM', {}) or {}
+    # Per-person notebooks (2026-09-24): in a shared vault a teammate works against
+    # their OWN notebooks (members/LOGIN/notebooklm.py) and their own upload records.
+    # tools/limitless_member.py swaps them in; for the owner nothing changes.
+    nb_state_dir, nb_role = '$VAULT/tools', 'owner'
+    sys.path.insert(0, '$VAULT/tools')
+    try:
+        import limitless_member as lm
+        nb, nb_sd, nb_info = lm.apply('$VAULT', nb, getattr(m, 'VAULT_OWNER', '') or '')
+        nb_state_dir, nb_role = str(nb_sd), nb_info['role']
+    except ImportError:
+        pass
+    except ValueError as nb_err:
+        nb, nb_role = {}, 'invalid'
+        print('NB_ERROR=' + str(nb_err))
+    print('NB_STATE_DIR=' + nb_state_dir)
+    print('NB_ROLE=' + nb_role)
     routes = nb.get('routes', [])
     default = nb.get('default')
     reminder = nb.get('reminder', {}) or {}
@@ -206,7 +222,17 @@ except Exception as e:
   LIMITLESS_DEFAULT_NB_ID=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^DEFAULT_NB_ID=' | cut -d= -f2-)
   LIMITLESS_DEFAULT_NB_LABEL=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^DEFAULT_NB_LABEL=' | cut -d= -f2-)
   LIMITLESS_REMINDER_NB_ID=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^REMINDER_NB_ID=' | cut -d= -f2-)
+  LIMITLESS_NB_STATE_DIR=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^NB_STATE_DIR=' | cut -d= -f2-)
+  LIMITLESS_NB_ROLE=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^NB_ROLE=' | cut -d= -f2-)
+  LIMITLESS_NB_ERROR=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^NB_ERROR=' | cut -d= -f2-)
 fi
+# Whose notebooks this Roll Call checks (tools/limitless_member.py): owner = the
+# manifest's, member = a teammate's own, unset = a teammate with none yet, invalid =
+# a teammate whose members/LOGIN/notebooklm.py can't be read. Records live in
+# LIMITLESS_NB_STATE_DIR (tools/ for the owner).
+LIMITLESS_NB_STATE_DIR="${LIMITLESS_NB_STATE_DIR:-$VAULT/tools}"
+LIMITLESS_NB_ROLE="${LIMITLESS_NB_ROLE:-owner}"
+LIMITLESS_NB_ERROR="${LIMITLESS_NB_ERROR:-}"
 
 # Returns 0 if a named check is enabled (in manifest CHECKS list, or no manifest = all enabled).
 # Use as: `if check_enabled <name>; then ... fi`
@@ -222,11 +248,13 @@ check_enabled() {
 
 # ── Whose Roll Call is this? (added 2026-09-24) ─────────
 # In a SHARED vault (one with .authors.json) Roll Call is per PERSON. Each person
-# sees their own machine, their own sign-ins and their own task file. The vault's
-# upkeep (tools kept in step with the canonical, the nightly job, the lesson
-# review, the shared task list, the notebooks' freshness, duplicates and
-# capacity, the Pinecone sync) belongs to the vault owner (manifest VAULT_OWNER)
-# and appears only on the owner's Roll Call. Matt, 2026-09-24: a teammate's Roll
+# sees their own machine, their own sign-ins, their own notebooks and their own
+# task file. The vault's upkeep (tools kept in step with the canonical, the nightly
+# job, the lesson review, the shared task list, the Pinecone sync) belongs to the
+# vault owner (manifest VAULT_OWNER) and appears only on the owner's Roll Call.
+# Notebooks are per person (2026-09-24): each teammate keeps their own in their
+# own Google account (members/<login>/notebooklm.py, tools/limitless_member.py)
+# and gets the same notebook checks the owner gets, on their notebooks. Matt, 2026-09-24: a teammate's Roll
 # Call "should not be pointing to anything of mine it needs to be tailored
 # specifically to him".
 # Who is running it = the vault's git email, mapped through .authors.json by the
@@ -497,7 +525,7 @@ if ! network_probe; then network_abort "at start"; fi
 if ! owner_run; then
   case "$LIMITLESS_RUNNER" in
     unknown*) echo "  Roll Call for $LIMITLESS_RUNNER — add this email to .authors.json under your GitHub login so Roll Call and the commit check know it is you." ;;
-    *)        echo "  Roll Call for $LIMITLESS_RUNNER — your machine, your sign-ins and your own task file (wiki/my-tasks/$LIMITLESS_RUNNER.md)." ;;
+    *)        echo "  Roll Call for $LIMITLESS_RUNNER — your machine, your sign-ins, your own notebooks and your own task file (wiki/my-tasks/$LIMITLESS_RUNNER.md)." ;;
   esac
   echo ""
 fi
@@ -1500,7 +1528,10 @@ else
     warn "auth check output unparseable" "notebooklm auth check --test · invoke Skill(notebooklm) if unclear"
   fi
 
-  if owner_run; then   # the notebooks' upkeep — coverage, freshness, duplicates, capacity
+  # The notebooks' upkeep — coverage, freshness, duplicates, capacity — runs for
+  # whoever HAS notebooks: the owner on the manifest's, a teammate on their own
+  # (2026-09-24, Matt: the same setup for them, with their own notebooks).
+  if [ "$LIMITLESS_NB_ROLE" = "owner" ] || [ "$LIMITLESS_NB_ROLE" = "member" ]; then
   # Notebook coverage — every notebook in NotebookLM must be in NOTEBOOK_ROUTES,
   # DEFAULT_ROUTE, REMINDER_NOTEBOOK_ID, or IGNORED_NOTEBOOKS. Catches the
   # "TheMatch silently unrouted" failure mode (2026-04-29). Single source of
@@ -1562,7 +1593,7 @@ else
     case " $_SEEN_LABELS " in *" $label "*) continue ;; esac
     _SEEN_LABELS="$_SEEN_LABELS $label"
 
-    state_path="$VAULT/tools/.notebooklm-${label}-state.json"
+    state_path="$LIMITLESS_NB_STATE_DIR/.notebooklm-${label}-state.json"
     if [ ! -f "$state_path" ]; then
       warn "no notebooklm $label state file" "python3.11 tools/notebooklm-wiki-refresh.py --seed --only $label"
       continue
@@ -1593,7 +1624,7 @@ else
   # Hub route (ca083f4f) — filename-prefix route, not a single file. Finds the
   # newest wiki/synthesis/hub-*.md file and compares to the hub state file.
   # Only run this check if 'hub' is in the project's routes — Hub-vault-specific.
-  HUB_STATE="$VAULT/tools/.notebooklm-hub-state.json"
+  HUB_STATE="$LIMITLESS_NB_STATE_DIR/.notebooklm-hub-state.json"
   _HAS_HUB_ROUTE=false
   if echo " $LIMITLESS_PROJECT_ROUTES " | grep -q ' hub:'; then
     _HAS_HUB_ROUTE=true
@@ -1632,6 +1663,12 @@ else
   # EXCLUDE_FROM_NOTEBOOKS, so we don't falsely warn cdaa7a43 is stale when the most-recent
   # edit went somewhere cdaa7a43 doesn't own. Keep this list in sync with NOTEBOOK_ROUTES +
   # EXCLUDE_FROM_NOTEBOOKS in tools/notebooklm-wiki-refresh.py.
+  if [ "$LIMITLESS_NB_ROLE" = "member" ]; then
+    # A teammate's general notebook takes different pages (their projects, and
+    # the owner's projects they don't carry, route elsewhere or nowhere), so ask
+    # the refresh tool's own routing instead of the owner's hand list below.
+    WIKI_DEFAULT_NEWEST_TS=$(python3.11 "$VAULT/tools/notebooklm-wiki-refresh.py" --newest-routed "${LIMITLESS_DEFAULT_NB_LABEL:-wiki}" 2>/dev/null)
+  else
   WIKI_DEFAULT_NEWEST_TS=$(find "$VAULT/wiki" -name '*.md' -type f \
     ! -path "$VAULT/wiki/apps/firehazmat.md" \
     ! -path "$VAULT/wiki/apps/openchiropractor.md" \
@@ -1644,8 +1681,9 @@ else
     ! -path "$VAULT/wiki/sources/openfirehouse-*.md" \
     ! -path "$VAULT/wiki/sources/opensalon-*.md" \
     -exec stat -f '%m' {} \; 2>/dev/null | sort -n | tail -1)
-  if [ -f "$VAULT/tools/.notebooklm-wiki-state.json" ]; then
-    LAST_REFRESH_TS=$(stat -f '%m' "$VAULT/tools/.notebooklm-wiki-state.json" 2>/dev/null || echo 0)
+  fi
+  if [ -f "$LIMITLESS_NB_STATE_DIR/.notebooklm-wiki-state.json" ]; then
+    LAST_REFRESH_TS=$(stat -f '%m' "$LIMITLESS_NB_STATE_DIR/.notebooklm-wiki-state.json" 2>/dev/null || echo 0)
     LAST_REFRESH_AGE_HOURS=$(( (NOW_TS - LAST_REFRESH_TS) / 3600 ))
     if [ -n "$WIKI_DEFAULT_NEWEST_TS" ] && [ "$LAST_REFRESH_TS" -lt "$WIKI_DEFAULT_NEWEST_TS" ]; then
       # An mtime comparison cannot see the notebook. It proves a file was touched
@@ -1688,7 +1726,7 @@ else
   # Both levels look at the same 5 curated sources (CLAUDE.md,
   # synthesis/claude-anti-patterns.md, concepts/limitless-stack.md,
   # concepts/paperclip.md, apps/limitless-stack-hub.md).
-  REMINDER_STATE="$VAULT/tools/.notebooklm-reminder-state.json"
+  REMINDER_STATE="$LIMITLESS_NB_STATE_DIR/.notebooklm-reminder-state.json"
   AB_STALE=0
   AB_UNVERIFIED=0
   if [ -f "$REMINDER_STATE" ]; then
@@ -1852,7 +1890,7 @@ try:
     print(total)
 except Exception:
     print(-1)
-" "$VAULT/tools/.notebooklm-$nb_label-state.json" < "$SWEEP_DIR/$nb_label.json" 2>/dev/null || echo -1)
+" "$LIMITLESS_NB_STATE_DIR/.notebooklm-$nb_label-state.json" < "$SWEEP_DIR/$nb_label.json" 2>/dev/null || echo -1)
       fi
       if [ "$DUPE_COUNT" = "-1" ] || [ -z "$DUPE_COUNT" ]; then
         # CLI unavailable / parse failed for this notebook — count toward
@@ -1889,7 +1927,10 @@ except Exception:
   # source nobody manages. It exists because sessions uploaded those files by hand and a
   # stale copy was left beside the current one. A STALE finding names the refresh command,
   # so the nightly self-heal fixes it unattended; an UNACCOUNTED one needs a person.
-  if command -v python3.11 >/dev/null 2>&1 && [ -f "$VAULT/tools/notebooklm_external.py" ]; then
+  # Owner only: the external files live on the owner's machine and go to the owner's
+  # notebooks, so a teammate's Roll Call would only print a green line for a check that
+  # never ran for them (found 2026-09-29).
+  if [ "$LIMITLESS_NB_ROLE" = "owner" ] && command -v python3.11 >/dev/null 2>&1 && [ -f "$VAULT/tools/notebooklm_external.py" ]; then
     EXT_OUT=$(cd "$VAULT" && python3.11 tools/notebooklm_external.py --check 2>&1)
     EXT_RC=$?
     if [ "$EXT_RC" -eq 0 ]; then
@@ -1947,35 +1988,14 @@ except Exception:
       warn "notebook capacity check failed (exit=$CAPS_EXIT)" "$CAPS_OUT"
     fi
   fi
+  elif [ "$LIMITLESS_NB_ROLE" = "unset" ]; then
+    # A teammate with no notebooks of their own yet. Their notebooks live in their
+    # own Google account (never the owner's); one command makes and fills them.
+    warn "you have no NotebookLM notebooks of your own for this vault yet" \
+         "python3.11 tools/notebooklm-member-setup.py --shared <the projects you share, e.g. openfirehouse,firehazmat>  (members/README.md)"
   else
-    # A teammate: the notebooks' upkeep is the owner's Roll Call. What IS yours:
-    # can your Google account open every notebook this vault uses? Without it,
-    # the session-start reminder query and every refresh fail for you.
-    if echo "$AUTH_OUT" | grep -q "Authentication Check" && ! echo "$AUTH_OUT" | grep -q "fail"; then
-      NB_ACC_DIR=$(mktemp -d "${TMPDIR:-/tmp}/preflight-access.XXXXXX")
-      NB_ACC_PIDS=()
-      nb_acc_n=0
-      for nb_item in $LIMITLESS_DEDUPE_NOTEBOOKS; do
-        nb_short="${nb_item%%:*}"; nb_lab="${nb_item#*:}"
-        ( notebooklm source list --notebook "$nb_short" --json > /dev/null 2>&1; echo $? > "$NB_ACC_DIR/$nb_lab.exit" ) &
-        NB_ACC_PIDS+=($!)
-        nb_acc_n=$((nb_acc_n+1))
-      done
-      for nb_pid in "${NB_ACC_PIDS[@]:-}"; do [ -n "$nb_pid" ] && wait "$nb_pid" 2>/dev/null; done
-      nb_denied=""
-      for nb_item in $LIMITLESS_DEDUPE_NOTEBOOKS; do
-        nb_lab="${nb_item#*:}"
-        [ "$(cat "$NB_ACC_DIR/$nb_lab.exit" 2>/dev/null || echo 1)" = "0" ] || nb_denied="$nb_denied $nb_lab"
-      done
-      rm -rf "$NB_ACC_DIR"
-      if [ "$nb_acc_n" -eq 0 ]; then
-        skip "no notebooks declared in this vault's manifest"
-      elif [ -z "$nb_denied" ]; then
-        ok "your Google account can open all $nb_acc_n of this vault's notebooks"
-      else
-        warn "your Google account can't open:$nb_denied" "ask the vault owner to share them with your Google account as Editor, then re-run Roll Call"
-      fi
-    fi
+    bad "your notebook file can't be used: $LIMITLESS_NB_ERROR" \
+        "fix members/<your-login>/notebooklm.py, then python3.11 tools/limitless_member.py"
   fi
 fi
 echo ""
@@ -2300,7 +2320,11 @@ echo "                        command=\"notebooklm use <id> && notebooklm ask '.
 echo "                        shell=\"zsh\", timeout_ms=90000)"
 echo "                      Do NOT pip-install notebooklm-py or run notebooklm login in sandbox"
 echo "                      (no display, wiped each session)."
+if [ "$LIMITLESS_NB_ROLE" = "member" ]; then
+  echo "                      YOUR reminder layer: ${LIMITLESS_REMINDER_NB_ID%%-*}  ·  YOUR general notebook: ${LIMITLESS_DEFAULT_NB_ID%%-*}   (all yours: python3.11 tools/limitless_member.py)"
+else
 echo "                      Reminder layer: ${LIMITLESS_REMINDER_NB_ID%%-*}  ·  Full wiki mirror: ${LIMITLESS_DEFAULT_NB_ID%%-*}   (from .limitless-project.py)"
+fi
 echo ""
 echo "  • CLAUDE.md      → Read at session start; it's the trust anchor for all the above."
 echo "                      Edit via the Edit tool on the sandbox path, commit + push at end."

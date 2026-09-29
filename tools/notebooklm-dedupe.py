@@ -32,7 +32,8 @@ Usage:
     find_dupes() for the ownership rule.
 
 Active notebook is taken from `notebooklm` CLI's current selection unless
---notebook is passed. State file is `tools/.notebooklm-<state>-state.json`.
+--notebook is passed. State file is `tools/.notebooklm-<state>-state.json` (a teammate's own
+records in a shared vault: `members/<login>/notebooklm-state/`).
 """
 import argparse
 import json
@@ -44,6 +45,21 @@ from collections import defaultdict
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent
+
+
+def _state_dir() -> Path:
+    """Where the upload records live: tools/ for the vault owner, or a teammate's own
+    members/<login>/notebooklm-state/ in a shared vault (tools/limitless_member.py)."""
+    sys.path.insert(0, str(TOOLS))
+    try:
+        import limitless_member as lm
+    except ImportError:
+        return TOOLS
+    try:
+        return lm.resolve(TOOLS.parent)[1]
+    except ValueError as e:        # never fall back to the owner's records
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(2)
 
 # The notebook every CLI call is pinned to. NEVER rely on `notebooklm use`
 # context here: that context is a single shared file, so a concurrent process
@@ -285,7 +301,7 @@ def main():
 
     sources = list_sources()
     print(f"Notebook {NOTEBOOK or '(context)'} has {len(sources)} sources")
-    state_path = TOOLS / f".notebooklm-{args.state}-state.json" if args.state else None
+    state_path = _state_dir() / f".notebooklm-{args.state}-state.json" if args.state else None
     claims = load_claims(state_path) if state_path else {}
     if not claims:
         print("! No route state loaded — cannot tell a real duplicate from two")
@@ -345,12 +361,12 @@ def main():
         print()
 
     if args.state and args.apply:
-        state_path = TOOLS / f".notebooklm-{args.state}-state.json"
+        state_path = _state_dir() / f".notebooklm-{args.state}-state.json"
         # Only remap entries for IDs we actually deleted (not the failures)
         applied_remap = {old: new for old, new in id_remap.items() if old in deleted_ids}
         remap_state(state_path, applied_remap, dry_run=False)
     elif args.state and not args.apply:
-        state_path = TOOLS / f".notebooklm-{args.state}-state.json"
+        state_path = _state_dir() / f".notebooklm-{args.state}-state.json"
         print(f"(dry-run) would remap state file: {state_path.name}")
         remap_state(state_path, id_remap, dry_run=True)
 

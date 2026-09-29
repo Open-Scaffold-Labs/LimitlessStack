@@ -40,7 +40,7 @@ The script checks each of the seven tools:
 6. **Hub Workspace** — nothing to check from the vault; its agent runtime (Hermes) is health-checked when the manifest's `SERVICES` names `hermes_health_url`.
 7. **Paperclip** — health-checked when the manifest's `SERVICES` names `paperclip_health_url`.
 
-**In a shared vault** (one with `.authors.json` and a `VAULT_OWNER` in the manifest), Roll Call is per person: whoever runs it sees only their own machine, their own sign-ins and their own task file (`wiki/my-tasks/<login>.md`). The vault's upkeep — tools kept in step with LimitlessStack, the nightly job, the lesson review, the shared task list, the notebooks' freshness and capacity, the Pinecone sync — appears only on the owner's Roll Call. A teammate's Roll Call also checks that their Google account can open every notebook the vault uses.
+**In a shared vault** (one with `.authors.json` and a `VAULT_OWNER` in the manifest), Roll Call is per person: whoever runs it sees only their own machine, their own sign-ins and their own task file (`wiki/my-tasks/<login>.md`). The vault's upkeep — tools kept in step with LimitlessStack, the nightly job, the lesson review, the shared task list, the Pinecone sync — appears only on the owner's Roll Call. Notebooks are per person: each teammate keeps their own in their own Google account (made once with `tools/notebooklm-member-setup.py`, listed in `members/<login>/notebooklm.py`), and their Roll Call runs the same notebook checks on them that the owner's runs on the owner's.
 
 Exit codes:
 

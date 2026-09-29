@@ -485,16 +485,24 @@ def content():
                "to <font face='Courier'>.authors.json</font> at the vault root and list each person's GitHub "
                "login with every email they commit with. In <font face='Courier'>.limitless-project.py</font> set "
                "<font face='Courier'>VAULT_OWNER = \"&lt;your-login&gt;\"</font>: the vault's upkeep checks then run on "
-               "your Roll Call, and each teammate's Roll Call shows only their own machine, sign-ins and task file. "
+               "your Roll Call, and each teammate's Roll Call shows only their own machine, sign-ins, notebooks and task file. "
                "Commit both."))
     f.append(P("<b>2. Each person, on their own computer:</b> clone the vault, then run "
                "<font face='Courier'>bash tools/install-git-hooks.sh</font>. From then on a commit that changes "
                "someone else's lines, their <font face='Courier'>members/&lt;login&gt;/</font> folder or their "
                "<font face='Courier'>wiki/my-tasks/&lt;login&gt;.md</font> is refused, and the message says how to "
                "send a suggestion instead."))
-    f.append(P("<b>3. Personal rules.</b> Each person keeps their own agent instructions in "
+    f.append(P("<b>3. Their own notebooks.</b> The notebooks in your manifest are yours. Each teammate makes their "
+               "own, in their own Google account, with one command on their computer: "
+               "<font face='Courier'>python3.11 tools/notebooklm-member-setup.py --shared &lt;your projects they work "
+               "on&gt;</font> (<font face='Courier'>--list</font> shows them), plus "
+               "<font face='Courier'>--own \"label=Name=wiki/apps/their-app.md\"</font> for each project of their own. "
+               "It creates a reminder notebook, a general one and one per project, fills them from the vault and "
+               "checks every upload. Your projects they don't list are never uploaded for them. From then on the "
+               "refresh, Roll Call and duplicate checks run on their notebooks, exactly as yours run on yours."))
+    f.append(P("<b>4. Personal rules.</b> Each person keeps their own agent instructions in "
                "<font face='Courier'>members/&lt;login&gt;/CLAUDE.md</font>, which everyone can read."))
-    f.append(P("<b>4. Optional backstop.</b> Copy <font face='Courier'>templates/github/authorship-safety-net.yml</font> "
+    f.append(P("<b>5. Optional backstop.</b> Copy <font face='Courier'>templates/github/authorship-safety-net.yml</font> "
                "to <font face='Courier'>.github/workflows/</font>. Each night it checks the day's commits and "
                "opens an issue for anyone whose writing was changed without the check, so they decide. "
                "Run it once by hand to prove it works."))
@@ -544,7 +552,7 @@ def content():
               "the files and run Roll Call on your Mac, then reports READY, WARN or BLOCK."),
     ])
     f.append(callout("<b>Sharing a vault?</b> The same skill works in a teammate's copy of a shared vault. Their "
-                     "Roll Call shows only their own machine, sign-ins and task file (section 08)."))
+                     "Roll Call shows only their own machine, sign-ins, notebooks and task file (section 08)."))
 
     # 10 ─ Troubleshooting
     f += section("10", "Troubleshooting", "What Roll Call and the tools tell you, and what to do")
@@ -558,6 +566,7 @@ def content():
         ["overview.md placeholder warning", "Write your overview and give it real dates (step 5)."],
         ["Your agent can't run notebooklm", "It must run on your own computer, where you signed in — not inside a cloud sandbox."],
         ["Grok Bot can't reach your Mac", "Settings, Computer: set Execution on this computer to Ask every time (not Never allow)."],
+        ["Teammate: \"no NotebookLM notebooks of your own\"", "Make yours: python3.11 tools/notebooklm-member-setup.py --shared <projects> (section 08, step 3)."],
         ["Grok Bot can't find the vault", "Its commands start in your home folder: use the full vault path in quotes, as the skill does."],
     ], [0.36, 0.64]))
     f.append(Spacer(1, 14))

@@ -168,8 +168,9 @@ def is_excluded(rel_path: str) -> bool:
 
 
 def state_file_for(label: str) -> Path:
-    """Return tools/.notebooklm-<label>-state.json for a given route label."""
-    return TOOLS / f".notebooklm-{label}-state.json"
+    """Return <STATE_DIR>/.notebooklm-<label>-state.json for a given route label
+    (tools/ for the owner; members/<login>/notebooklm-state/ for a teammate)."""
+    return STATE_DIR / f".notebooklm-{label}-state.json"
 
 
 def route_for_label(label: str) -> tuple[str, str, str]:
@@ -188,11 +189,6 @@ def route_for_label(label: str) -> tuple[str, str, str]:
 # means it'll auto-upload on next sync; removing one does NOT auto-delete
 # (sync_reminder never deletes — reminder scope is curated, deletes are manual).
 REMINDER_NOTEBOOK_ID = "ab4b7ccb"
-try:
-    import notebooklm_external as _EXTERNAL   # sources outside the vault (2026-09-25)
-except ImportError:
-    _EXTERNAL = None
-
 REMINDER_STATE_FILE = TOOLS / ".notebooklm-reminder-state.json"
 REMINDER_FILES = [
     "CLAUDE.md",
@@ -240,6 +236,24 @@ def _load_manifest():
 _MANIFEST = _load_manifest()
 _NB_MANIFEST = _MANIFEST.get("NOTEBOOKLM", {})
 
+# ── Per-person notebooks in a shared vault (2026-09-24) ──────────────────
+# The manifest names the vault OWNER's notebooks. A teammate works against their
+# OWN notebooks, declared in members/<login>/notebooklm.py, with their upload
+# records in members/<login>/notebooklm-state/. tools/limitless_member.py does the
+# swap; for the owner (or a personal vault) it returns the block unchanged and
+# STATE_DIR stays tools/, so nothing about the owner's setup moves.
+STATE_DIR = TOOLS
+ROUTING_ORDER = None          # teammate only: every vault route, None label = not carried
+MEMBER = {"login": "", "role": "owner"}
+try:
+    import limitless_member as _lm
+    _NB_MANIFEST, STATE_DIR, MEMBER = _lm.apply(VAULT, _NB_MANIFEST, _MANIFEST.get("VAULT_OWNER", "") or "")
+except ImportError:
+    pass
+except ValueError as _e:
+    print(f"ERROR: {_e}", file=sys.stderr)
+    sys.exit(2)
+
 if "routes" in _NB_MANIFEST:
     NOTEBOOK_ROUTES = _NB_MANIFEST["routes"]
     PROJECT_LABELS = list(dict.fromkeys(r[2] for r in NOTEBOOK_ROUTES))  # see the module-level note
@@ -258,6 +272,16 @@ if "files" in _REMINDER:
     REMINDER_FILES = _REMINDER["files"]
 if "title_aliases" in _REMINDER:
     REMINDER_TITLE_ALIASES = _REMINDER["title_aliases"]
+
+
+try:
+    import notebooklm_external as _EXTERNAL   # sources outside the vault (2026-09-25)
+except ImportError:
+    _EXTERNAL = None
+
+if "routing_order" in _NB_MANIFEST:
+    ROUTING_ORDER = _NB_MANIFEST["routing_order"]
+REMINDER_STATE_FILE = STATE_DIR / ".notebooklm-reminder-state.json"
 
 
 def reminder_title_for(rel_path: str, basename: str) -> str:
@@ -333,6 +357,7 @@ def load_state(state_path: Path) -> dict:
 
 
 def save_state(state_path: Path, state: dict) -> None:
+    state_path.parent.mkdir(parents=True, exist_ok=True)   # a teammate's first run
     state_path.write_text(json.dumps(state, indent=2))
 
 
@@ -993,20 +1018,15 @@ def plan_routing() -> dict[str, list[Path]]:
         if is_excluded(rel):
             continue
         matched = False
-        for prefix, _nbid, label, _display in NOTEBOOK_ROUTES:
+        for prefix, _nbid, label, _display in (ROUTING_ORDER or NOTEBOOK_ROUTES):
             # Match if path == prefix (file route), is under prefix/ (dir route),
             # or starts with prefix when prefix doesn't end in '/' or '.md' (filename-prefix route,
             # e.g., "wiki/synthesis/hub-" matches "wiki/synthesis/hub-whitepaper.md").
-            if rel == prefix:
-                buckets[label].append(path)
-                matched = True
-                break
-            if prefix.endswith("/") and rel.startswith(prefix):
-                buckets[label].append(path)
-                matched = True
-                break
-            if not prefix.endswith(".md") and not prefix.endswith("/") and rel.startswith(prefix):
-                buckets[label].append(path)
+            if (rel == prefix
+                    or (prefix.endswith("/") and rel.startswith(prefix))
+                    or (not prefix.endswith(".md") and not prefix.endswith("/") and rel.startswith(prefix))):
+                if label is not None:          # None: a project this person doesn't carry
+                    buckets[label].append(path)
                 matched = True
                 break
         if not matched:
@@ -1284,6 +1304,7 @@ def load_reminder_state() -> dict:
 
 
 def save_reminder_state(state: dict) -> None:
+    REMINDER_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     REMINDER_STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
@@ -1500,6 +1521,10 @@ def check_coverage() -> int:
 
     orphans = []
     for nb in notebooks:
+        # A teammate's account also lists notebooks other people shared WITH them;
+        # those are not theirs to route. The owner's check is unchanged.
+        if MEMBER["role"] == "member" and nb.get("is_owner") is False:
+            continue
         nid = nb.get("id")
         title = (nb.get("title") or "(untitled)").strip()
         if nid and not _is_known(nid):
@@ -1646,6 +1671,10 @@ def main():
                              "out to mean 47 of 95 routed pages had never made it in and "
                              "every query against that bucket was silently seeing half the "
                              "wiki. Offline: reads the filesystem, never the API.")
+    parser.add_argument("--newest-routed", metavar="LABEL",
+                        help="print the newest mtime (epoch seconds, 0 if none) of the wiki pages "
+                             "routed to LABEL and exit. Offline. Used by the preflight for a "
+                             "teammate's default bucket, whose routing differs from the owner's.")
     parser.add_argument("--check-coverage", action="store_true",
                         help="compare NotebookLM's notebooks against routing + IGNORED_NOTEBOOKS. "
                              "Print orphans (one per line, ID<TAB>title) and exit. "
@@ -1669,6 +1698,20 @@ def main():
                              "<project> = just that notebook; 'reminder' = ab4b7ccb only. Default: all.")
     args = parser.parse_args()
 
+    if MEMBER["role"] == "unset":
+        # A teammate with no notebooks of their own. Never fall back to the owner's.
+        print(f"ERROR: {MEMBER['login']} has no NotebookLM notebooks of their own for this vault yet. "
+              "Make them: python3.11 tools/notebooklm-member-setup.py --shared <projects you share>",
+              file=sys.stderr)
+        sys.exit(2)
+
+    if args.newest_routed:
+        newest = 0
+        for p in plan_routing().get(args.newest_routed, []):
+            newest = max(newest, int(p.stat().st_mtime))
+        print(newest)
+        sys.exit(0)
+
     # --count-routed is filesystem-only and must run BEFORE the auth check:
     # it never touches the API, and gating it on auth made the preflight's
     # coverage line hang on `notebooklm auth check` (observed 2026-08-24).
@@ -1686,9 +1729,9 @@ def main():
             if is_excluded(rel):
                 continue
             dest = DEFAULT_ROUTE[2]
-            for r in NOTEBOOK_ROUTES:
+            for r in (ROUTING_ORDER or NOTEBOOK_ROUTES):
                 if rel.startswith(r[0]):
-                    dest = r[2]
+                    dest = r[2]              # None for a project this person doesn't carry
                     break
             # Same default-bucket-only exclusion route_files() applies, or the
             # preflight's "eligible" count would exceed what the sync uploads.
