@@ -1813,6 +1813,12 @@ def main():
             seed_reminder(args.dry_run)
         else:
             sync_reminder(args.dry_run, force=args.force)
+            # The reminder notebook's files from outside the vault — the Hub repo's rules
+            # file, as hub-CLAUDE.md (2026-10-03; it had been kept by hand and fell 11 days
+            # behind). Same mechanism as the routes above.
+            if _EXTERNAL is not None:
+                _EXTERNAL.sync_externals(sys.modules[__name__], _EXTERNAL.REMINDER_LABEL,
+                                         args.dry_run, force=args.force)
 
 
 def run_verify_existing(labels_to_run: list, do_reminder: bool, dry_run: bool) -> None:

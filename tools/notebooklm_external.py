@@ -30,6 +30,14 @@ the vault owner's machine and the notebooks are the owner's):
       "git_ref": None reads the folder ON PURPOSE. A file committed in git with neither is
       reported by --check (NO_GIT_REF), so a new entry cannot fall behind unnoticed.
 
+      "label": "reminder" puts the file in the curated reminder notebook rather than a
+      wiki route's notebook. Added 2026-10-03 for the Hub repo's rules file, kept there as
+      "hub-CLAUDE.md": it was maintained by hand, nothing checked it, and it fell 11 days
+      behind (09-22 → 10-03). It could not go in the reminder file list because that list
+      uploads by filename and "CLAUDE.md" is the vault's own source in that notebook; this
+      path uploads under the entry's title. A source another sync records as its own is
+      never removed as a stray, whatever its title.
+
   NOTEBOOKLM_FROZEN = { "<notebook id>": ["<title>", ...] }
       Sources kept on purpose that never change (dated specs, handoffs).
 
@@ -82,6 +90,32 @@ def _role(rf) -> str:
 
 def _state_dir(rf) -> Path:
     return getattr(rf, "STATE_DIR", None) or rf.TOOLS
+
+
+REMINDER_LABEL = "reminder"
+
+
+def _notebook_for(rf, label: str) -> tuple[str, str]:
+    """(notebook id, display name) for an entry's label: a wiki route's notebook, or the
+    curated reminder notebook for "reminder" (not a route — route_for_label() rejects it)."""
+    if label == REMINDER_LABEL:
+        return rf.REMINDER_NOTEBOOK_ID, REMINDER_LABEL
+    nbid, _, display = rf.route_for_label(label)
+    return nbid, display
+
+
+def _owned_elsewhere(rf) -> set[str]:
+    """Source ids that another sync (a wiki route, the reminder file list) records as its
+    own. Never removed as strays: in the reminder notebook the vault's own rules file is a
+    source titled "CLAUDE.md", and a title alone must never decide that it goes."""
+    ids: set[str] = set()
+    for p in _state_dir(rf).glob(".notebooklm-*-state.json"):
+        if p.name == STATE_NAME:
+            continue
+        for v in _load(p).values():
+            if isinstance(v, dict) and v.get("source_id"):
+                ids.add(v["source_id"])
+    return ids
 
 
 # ── what an entry's notebook copy should say (2026-10-03) ─────────────────
@@ -237,7 +271,7 @@ def sync_externals(rf, label: str, dry_run: bool = False, force: bool = False) -
     mine = [e for e in ext if e.get("label") == label]
     if not mine:
         return counts
-    notebook_id, _, display = rf.route_for_label(label)
+    notebook_id, display = _notebook_for(rf, label)
     state_path = _state_dir(rf) / STATE_NAME
     state = _load(state_path)
     rf.activate_notebook(notebook_id)
@@ -320,9 +354,13 @@ def sync_externals(rf, label: str, dry_run: bool = False, force: bool = False) -
             if dry_run or not (entry and entry.get("verified_at")):
                 continue
             live = _sources(rf, notebook_id) or []
+            owned = _owned_elsewhere(rf)
             for s in live:
                 t, sid = s.get("title") or "", _sid(s)
                 if sid == entry["source_id"] or (t not in e["hand_titles"] and t != title):
+                    continue
+                if sid in owned:
+                    print(f"  [{display}] ! {t} ({sid[:8]}) kept — another sync owns it")
                     continue
                 if not _backup_text(rf, notebook_id, sid, t, backup):
                     print(f"  [{display}] ! stray {t} ({sid[:8]}) kept — its text could not be saved first")
@@ -358,7 +396,7 @@ def check(rf) -> int:
 
     fetched: dict = {}
     for e in ext:
-        nb, _, _ = rf.route_for_label(e["label"])
+        nb, _ = _notebook_for(rf, e["label"])
         title = e["title"]
         try:
             got = _content(e, fetched)

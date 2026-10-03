@@ -343,6 +343,65 @@ with tempfile.TemporaryDirectory() as t:
         rc, out = run_check(with_entry(f, e))
         expect("NO_GIT_REF" not in out, f"a file in the folder but not in git ({name}) is not reported")
 
+print('label "reminder" — the Hub repo\'s rules file in the reminder notebook (2026-10-03):')
+REM = "ab4b7ccb"
+
+
+def reminder_fake(t, sources, hand_titles=()):
+    f = Fake(t, sources)
+    f.REMINDER_NOTEBOOK_ID = REM
+
+    def no_route(label):                       # as in the refresh tool: "reminder" is no route
+        raise KeyError(f"Unknown route label: {label}")
+    f.route_for_label = no_route
+    f.activated = []
+    f.activate_notebook = f.activated.append
+    f._MANIFEST["NOTEBOOKLM_ACCOUNTED"] = []   # the fake lists the same sources for any notebook
+    f._MANIFEST["NOTEBOOKLM_EXTERNAL"] = [{"path": str(f.rules), "label": "reminder",
+                                           "title": "hub-CLAUDE.md", "hand_titles": list(hand_titles)}]
+    # The reminder file list owns the vault's own rules file, a source titled "CLAUDE.md".
+    (Path(t) / ".notebooklm-reminder-state.json").write_text(
+        json.dumps({"CLAUDE.md": {"source_id": "vault-claude"}}))
+    return f
+
+
+with tempfile.TemporaryDirectory() as t:
+    f = reminder_fake(t, [{"id": "vault-claude", "title": "CLAUDE.md"},
+                          {"id": "hand-hub", "title": "hub-CLAUDE.md"},
+                          {"id": "hand-hub-2", "title": "hub-CLAUDE.md"}])
+    rc, out = run_check(f)
+    expect(rc == 1 and "STALE\treminder\thub-CLAUDE.md\tnever synced" in out,
+           "check resolves the reminder notebook (no route) and reports a copy never synced")
+    c = quiet(ext.sync_externals, f, "reminder")
+    ids = {s["id"] for s in f.sources}
+    expect(f.activated == [REM], "it syncs into the reminder notebook")
+    expect(c["adopted"] == 1 and "hand-hub" in ids and not f.uploaded,
+           "the hand-kept copy with the managed title is adopted, not re-uploaded")
+    expect("hand-hub-2" not in ids, "a second copy with the managed title is removed as a stray")
+    expect("vault-claude" in ids, "the vault's own CLAUDE.md source is never touched")
+    rc, out = run_check(f)
+    expect(rc == 0, "and check is clean afterwards")
+    f.rules.write_text("rules v2\n")
+    c = quiet(ext.sync_externals, f, "reminder")
+    ids = {s["id"] for s in f.sources}
+    expect(c["replaced"] == 1 and f.uploaded == ["rules v2\n"] and "hand-hub" not in ids,
+           "an edited file replaces the managed copy")
+    expect([n for k, n in f.calls if k == "add"] == ["hub-CLAUDE.md"],
+           'it is uploaded under the entry\'s title, never as "CLAUDE.md"')
+
+print("a source another sync owns is never removed as a stray, whatever its title:")
+with tempfile.TemporaryDirectory() as t:
+    # Misconfigured on purpose: "CLAUDE.md" listed as a hand title in the reminder notebook,
+    # where it is the title of the vault's own rules file.
+    f = reminder_fake(t, [{"id": "vault-claude", "title": "CLAUDE.md"},
+                          {"id": "hand-1", "title": "CLAUDE.md"}], hand_titles=["CLAUDE.md"])
+    c, out = capture(ext.sync_externals, f, "reminder")
+    ids = {s["id"] for s in f.sources}
+    expect("vault-claude" in ids and ("delete", "vault-claude") not in f.calls,
+           "the vault's CLAUDE.md (recorded by the reminder sync) is kept")
+    expect("another sync owns it" in out, "and the run says why")
+    expect("hand-1" not in ids, "a real stray with the same title is still removed")
+
 print("Roll Call shows every finding kind (the block in limitless-preflight.sh):")
 PF = HERE / "limitless-preflight.sh"
 if not PF.exists():
