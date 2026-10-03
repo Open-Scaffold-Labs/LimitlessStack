@@ -38,6 +38,7 @@ class Fake:
         self.verify_ok = verify_ok
         self.fulltext_ok = fulltext_ok
         self.calls = []
+        self.uploaded = []                      # the text of every upload, in order
         self.NOTEBOOK_ROUTES = [("wiki/apps/openfirehouse", NB, "openfirehouse", "openfirehouse")]
         self.rules = Path(tmp) / "CLAUDE.md"
         self.rules.write_text("rules v1\n")
@@ -74,6 +75,7 @@ class Fake:
         sid = f"new-{self._n}"
         self.sources.append({"id": sid, "title": Path(path).name})
         self.calls.append(("add", Path(path).name))
+        self.uploaded.append(Path(path).read_text())
         return sid
 
     def cmd_verify_content(self, sid, path, wait_retries=5):
@@ -118,6 +120,7 @@ with tempfile.TemporaryDirectory() as t:
     rc, out = run_check(f)
     expect(rc == 1 and "never synced" in out, "an external file never synced is STALE")
     expect("UNACCOUNTED" not in out, "wiki-owned and frozen sources are not reported")
+    expect("NO_GIT_REF" not in out, "a file outside any git repository is never reported as NO_GIT_REF")
     quiet(ext.sync_externals, f, "openfirehouse")
     rc, out = run_check(f)
     expect(rc == 0, "after a sync, a clean notebook checks clean (exit 0)")
@@ -178,6 +181,206 @@ with tempfile.TemporaryDirectory() as t:
     c = quiet(ext.sync_externals, f, "openfirehouse")
     expect(c["adopted"] == 1 and "old-managed" in {s["id"] for s in f.sources},
            "an existing copy with the managed title and matching content is adopted, not re-uploaded")
+
+# ── git_ref: a repo file is sent as it is on GitHub, not as it sits in a folder (2026-10-03) ──
+# Each case uses throwaway repos: a bare "GitHub", the folder the config points at (cloned
+# once and never updated — the stale folder that caused this), and another lane that pushes.
+import subprocess
+
+
+def git(cwd, *a):
+    r = subprocess.run(["git", "-C", str(cwd), *a], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"git {' '.join(a)} failed: {r.stderr.strip()}")
+    return r.stdout.strip()
+
+
+def capture(fn, *a, **k):
+    import io, contextlib
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        res = fn(*a, **k)
+    return res, buf.getvalue()
+
+
+class Repo:
+    def __init__(self, tmp, first="v1\n"):
+        tmp = Path(tmp)
+        self.origin = tmp / "github.git"
+        git(tmp, "init", "-q", "--bare", "-b", "main", str(self.origin))
+        self.lane = self._clone(tmp / "lane", empty=True)
+        self.push(first)
+        self.folder = self._clone(tmp / "folder")
+
+    def _clone(self, where, empty=False):
+        git(where.parent, "clone", "-q", str(self.origin), str(where))
+        for k, v in (("user.email", "test@example.com"), ("user.name", "Test"),
+                     ("commit.gpgsign", "false"), ("core.hooksPath", "/dev/null")):
+            git(where, "config", k, v)
+        if empty:
+            git(where, "checkout", "-q", "-b", "main")
+        return where
+
+    def push(self, text, name="CHANGELOG.md"):
+        (self.lane / name).write_text(text)
+        git(self.lane, "add", name)
+        git(self.lane, "commit", "-q", "-m", text.strip())
+        git(self.lane, "push", "-q", "origin", "main")
+        return git(self.lane, "rev-parse", "HEAD")
+
+
+def git_entry(path, ref="origin/main"):
+    e = {"path": str(path), "label": "openfirehouse", "title": "openfirehouse-CHANGELOG.md",
+         "hand_titles": ["CHANGELOG.md"]}
+    if ref:
+        e["git_ref"] = ref
+    return e
+
+
+def with_entry(f, e):
+    f._MANIFEST["NOTEBOOKLM_EXTERNAL"] = [e]
+    return f
+
+
+def receipt(f, title="openfirehouse-CHANGELOG.md"):
+    return json.loads((f.STATE_DIR / ext.STATE_NAME).read_text()).get(title, {})
+
+
+print("git_ref:")
+with tempfile.TemporaryDirectory() as t:
+    r = Repo(t)
+    v2 = r.push("v2\n")                       # another lane ships; nobody updates the folder
+    f = with_entry(Fake(t, []), git_entry(r.folder / "CHANGELOG.md"))
+    c, out = capture(ext.sync_externals, f, "openfirehouse", dry_run=True)
+    expect(not f.uploaded and f"from origin/main at {v2[:7]}" in out,
+           "a dry run sends nothing and names the branch and commit it would send")
+    c = quiet(ext.sync_externals, f, "openfirehouse")
+    expect(c["added"] == 1 and f.uploaded == ["v2\n"],
+           "sync sends the file as it is on GitHub (v2), not the stale folder's copy (v1)")
+    rec = receipt(f)
+    expect(rec.get("git_ref") == "origin/main" and rec.get("git_commit") == v2,
+           "the receipt records the branch and the commit that was sent")
+    rc, out = run_check(f)
+    expect((r.folder / "CHANGELOG.md").read_text() == "v1\n" and rc == 0,
+           "check agrees with sync: clean while the folder still holds v1")
+    v3 = r.push("v3\n")
+    rc, out = run_check(f)
+    expect(rc == 1 and "changed on origin/main" in out,
+           "a new push makes check STALE although the folder never changed")
+    c = quiet(ext.sync_externals, f, "openfirehouse")
+    expect(c["replaced"] == 1 and f.uploaded[-1] == "v3\n" and receipt(f).get("git_commit") == v3,
+           "the next sync sends the new version")
+    rc, out = run_check(f)
+    expect(rc == 0, "and check is clean again")
+
+    r.push("v4\n")                            # pushed, but this machine cannot reach GitHub
+    git(r.folder, "remote", "set-url", "origin", str(Path(t) / "nowhere.git"))
+    s2 = Path(t) / "s2"
+    s2.mkdir()
+    g = with_entry(Fake(s2, []), git_entry(r.folder / "CHANGELOG.md"))
+    c, out = capture(ext.sync_externals, g, "openfirehouse")
+    expect(g.uploaded == ["v3\n"] and "could not fetch origin/main" in out,
+           "GitHub unreachable: the branch as last fetched (v3) is sent and the run says so — never the folder (v1)")
+
+with tempfile.TemporaryDirectory() as t:
+    r = Repo(t)
+    f = with_entry(Fake(t, [{"id": "hand-1", "title": "CHANGELOG.md"}]),
+                   git_entry(r.folder / "MISSING.md"))
+    c, out = capture(ext.sync_externals, f, "openfirehouse")
+    expect(c["failed"] == 1 and c["skipped"] == 0 and not f.uploaded and "is not on origin/main" in out,
+           "a file the branch does not have is a failure, not a quiet skip, and nothing is sent")
+    expect("hand-1" in {s["id"] for s in f.sources}, "and nothing is deleted")
+    rc, out = run_check(f)
+    expect(rc == 2 and out.startswith("ERROR"), "check says it could not read it (exit 2)")
+
+with tempfile.TemporaryDirectory() as t:
+    r = Repo(t)
+    r.push("v2\n")
+    f = with_entry(Fake(t, []), git_entry(r.folder / "CHANGELOG.md", ref=None))
+    quiet(ext.sync_externals, f, "openfirehouse")
+    expect(f.uploaded == ["v1\n"], "an entry WITHOUT git_ref still sends the folder's copy, as before")
+    expect(set(receipt(f)) == {"path", "notebook", "source_id", "sha256", "verified_at"},
+           "and its receipt has exactly the fields it had before")
+    s3 = Path(t) / "s3"
+    s3.mkdir()
+    gone = with_entry(Fake(s3, []), git_entry(Path(t) / "gone" / "CHANGELOG.md"))
+    c = quiet(ext.sync_externals, gone, "openfirehouse")
+    expect(c["skipped"] == 1 and not gone.uploaded, "a repository that is not on this machine is skipped, as before")
+    rc, _ = run_check(gone)
+    expect(rc == 0, "and check ignores it, as before")
+
+with tempfile.TemporaryDirectory() as t:
+    r = Repo(t)                               # the folder is current: same text as GitHub
+    f = with_entry(Fake(t, []), git_entry(r.folder / "CHANGELOG.md", ref=None))
+    quiet(ext.sync_externals, f, "openfirehouse")
+    with_entry(f, git_entry(r.folder / "CHANGELOG.md"))    # now switch git_ref on
+    rc, out = run_check(f)
+    expect(rc == 0, "switching git_ref on: a receipt made from the folder stays valid when the text matches")
+    f.calls.clear()
+    c = quiet(ext.sync_externals, f, "openfirehouse")
+    expect(c["unchanged"] == 1 and not any(k == "add" for k, _ in f.calls),
+           "and nothing is re-uploaded")
+
+print("NO_GIT_REF — a file in git that has no git_ref:")
+with tempfile.TemporaryDirectory() as t:
+    r = Repo(t)
+    f = with_entry(Fake(t, []), git_entry(r.folder / "CHANGELOG.md", ref=None))   # no git_ref key
+    quiet(ext.sync_externals, f, "openfirehouse")
+    rc, out = run_check(f)
+    expect(rc == 1 and "NO_GIT_REF\topenfirehouse\topenfirehouse-CHANGELOG.md\t" in out,
+           "a file committed in git with no git_ref is reported")
+    e = git_entry(r.folder / "CHANGELOG.md", ref=None)
+    e["git_ref"] = None                                                     # folder, on purpose
+    rc, out = run_check(with_entry(f, e))
+    expect(rc == 0 and "NO_GIT_REF" not in out, '"git_ref": None (the folder, on purpose) is not reported')
+    rc, out = run_check(with_entry(f, git_entry(r.folder / "CHANGELOG.md")))
+    expect(rc == 0 and "NO_GIT_REF" not in out, 'an entry with "git_ref": "origin/main" is not reported')
+    (r.folder / ".gitignore").write_text("CLAUDE.md\n")
+    for name in ("CLAUDE.md", "LOCAL.md"):                                  # ignored, untracked
+        (r.folder / name).write_text("only here\n")
+        e = git_entry(r.folder / name, ref=None)
+        e["title"] = f"x-{name}"
+        rc, out = run_check(with_entry(f, e))
+        expect("NO_GIT_REF" not in out, f"a file in the folder but not in git ({name}) is not reported")
+
+print("Roll Call shows every finding kind (the block in limitless-preflight.sh):")
+PF = HERE / "limitless-preflight.sh"
+if not PF.exists():
+    print("  skip limitless-preflight.sh is not beside this file")
+else:
+    pf_lines = PF.read_text().split("\n")
+    a = next((i for i, l in enumerate(pf_lines) if "Sources outside the vault + an account of every source" in l), None)
+    b = next((i for i in range(a or 0, len(pf_lines)) if "Join the capacity check backgrounded" in pf_lines[i]), None)
+    expect(a is not None and b is not None, "the source-check block is found in limitless-preflight.sh")
+    block = "\n".join(pf_lines[a:b]) if a is not None and b is not None else ""
+    shell = "/bin/bash" if os.path.exists("/bin/bash") else "bash"          # macOS runs it on bash 3.2
+
+    def roll_call(text, rc):
+        with tempfile.TemporaryDirectory() as t:
+            (Path(t) / "tools").mkdir()
+            (Path(t) / "tools" / "notebooklm_external.py").write_text("")
+            script = ('set -u\nVAULT="$1"\nLIMITLESS_NB_ROLE=owner\n'
+                      'ok() { printf "OK\\t%s\\n" "$1"; }\n'
+                      'warn() { printf "WARN\\t%s\\t%s\\n" "$1" "${2:-}"; }\n'
+                      'python3.11() { printf "%s" "$FAKE_OUT"; return "$FAKE_RC"; }\n' + block + "\n")
+            p = subprocess.run([shell, "-c", script, "harness", t], capture_output=True, text=True,
+                               env=dict(os.environ, FAKE_OUT=text, FAKE_RC=str(rc)))
+            return p.returncode, p.stdout + p.stderr
+
+    code, out = roll_call("", 0)
+    expect(code == 0 and out.startswith("OK\tnotebooklm sources outside the vault are current"),
+           "exit 0: one green line")
+    code, out = roll_call("NO_GIT_REF\topenfirehouse\tx-CHANGELOG.md\twhy\n", 1)
+    expect(code == 0 and "WARN\tnotebooklm openfirehouse: file(s) in git read from a folder" in out
+           and "x-CHANGELOG.md" in out and '"git_ref": "origin/main"' in out and "cannot read" not in out,
+           "NO_GIT_REF: a warning naming the file and the git_ref fix")
+    code, out = roll_call("STALE\topenfirehouse\tx.md\tthe file changed since the last sync\n", 1)
+    expect(code == 0 and "need a sync" in out and "--only openfirehouse" in out and "cannot read" not in out,
+           "STALE: still a warning naming the refresh, as before")
+    code, out = roll_call("SOMETHING_NEW\tx\ty\tz\n", 1)
+    expect(code == 0 and "cannot read" in out, "an exit-1 finding Roll Call cannot read still warns — never silence")
+    code, out = roll_call("ERROR\tcould not list notebook abc\n", 2)
+    expect(code == 0 and "could not run" in out, "exit 2: 'could not run', as before")
 
 print()
 if FAILS:

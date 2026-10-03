@@ -95,9 +95,16 @@ SYNC_CHECK = {
 # DISTINCT title, is re-uploaded only when its content changes, and any copy titled with one
 # of hand_titles (a hand upload) is removed once the managed copy is verified — its text is
 # saved to NOTEBOOKLM_REMOVED_BACKUP first. Owner only. Leave these out if you have none.
+# A file kept in git (a changelog, a README) should carry "git_ref": the tool then sends the
+# file as it is on that branch, fetched each run, instead of the folder's copy — a folder no
+# session brings up to date falls behind and the notebook with it (found 2026-10-03).
+# Roll Call reports a file committed in git with no "git_ref"; "git_ref": None reads the folder
+# on purpose.
 # NOTEBOOKLM_EXTERNAL = [
 #     {"path": "~/my-repo/CLAUDE.md", "label": "<route label>",
 #      "title": "my-repo-rules-CLAUDE.md", "hand_titles": ["CLAUDE.md"]},
+#     {"path": "~/my-repo/CHANGELOG.md", "label": "<route label>", "git_ref": "origin/main",
+#      "title": "my-repo-CHANGELOG.md", "hand_titles": ["CHANGELOG.md"]},
 # ]
 # NOTEBOOKLM_FROZEN = {"<notebook id prefix>": ["<title of a dated source kept on purpose>"]}
 # NOTEBOOKLM_ACCOUNTED = ["<notebook id prefix>"]   # every source there must be managed or frozen

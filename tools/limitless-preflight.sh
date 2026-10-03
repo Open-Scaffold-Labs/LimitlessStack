@@ -1984,6 +1984,19 @@ except Exception:
         warn "notebooklm $ext_nb: source(s) nobody manages — $ext_what" \
              "list each in NOTEBOOKLM_EXTERNAL or NOTEBOOKLM_FROZEN in .limitless-project.py, or (with Matt's okay) remove it: notebooklm source delete <id> -n $ext_nb -y"
       done
+      # A file committed in git, listed with no "git_ref" (added 2026-10-03): it is read from a
+      # folder, and a folder nobody brings up to date falls behind GitHub — the OpenFirehouse
+      # CHANGELOG sat two days stale that way. A person decides; the refresh cannot.
+      for ext_label in $(printf '%s\n' "$EXT_OUT" | awk -F'\t' '$1=="NO_GIT_REF"{print $2}' | sort -u); do
+        ext_what=$(printf '%s\n' "$EXT_OUT" | awk -F'\t' -v l="$ext_label" '$1=="NO_GIT_REF" && $2==l {printf "%s%s", sep, $3; sep="; "}')
+        warn "notebooklm $ext_label: file(s) in git read from a folder that can fall behind GitHub — $ext_what" \
+             "in .limitless-project.py, add \"git_ref\": \"origin/main\" to that NOTEBOOKLM_EXTERNAL entry (or \"git_ref\": None to read the folder on purpose)"
+      done
+      # Exit 1 with no line this block knows how to show would print NOTHING — say so instead.
+      if ! printf '%s\n' "$EXT_OUT" | awk -F'\t' '$1=="STALE" || $1=="UNACCOUNTED" || $1=="NO_GIT_REF" {f=1} END {exit !f}'; then
+        warn "notebooklm source check reported a finding this Roll Call cannot read ($(printf '%s' "$EXT_OUT" | tail -1 | cut -c1-120))" \
+             "python3.11 tools/notebooklm_external.py --check"
+      fi
     else
       warn "notebooklm source accounting could not run ($(printf '%s' "$EXT_OUT" | tail -1 | cut -c1-120))" \
            "python3.11 tools/notebooklm_external.py --check"
