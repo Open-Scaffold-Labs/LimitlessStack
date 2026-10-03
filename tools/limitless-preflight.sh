@@ -109,6 +109,7 @@ LIMITLESS_DEFAULT_NB_LABEL=""
 LIMITLESS_REMINDER_NB_ID=""
 LIMITLESS_OBSIDIAN_MIN_PAGES="10"  # default; manifest's OBSIDIAN.expected_min_pages overrides
 LIMITLESS_LOG_ORDER_BASELINE="0"   # default; manifest's LOG_ORDER_BASELINE overrides (a vault's own log history)
+LIMITLESS_LOG_DRIFT_BASELINE="0"   # default; manifest's LOG_DATE_DRIFT_BASELINE overrides (one-day date mismatches)
 LIMITLESS_HERMES_URL=""            # manifest SERVICES.hermes_health_url — YOUR agent runtime, if you run one
 LIMITLESS_PAPERCLIP_URL=""         # manifest SERVICES.paperclip_health_url — YOUR Paperclip, if you run one
 LIMITLESS_VAULT_OWNER=""           # manifest VAULT_OWNER — GitHub login of the person who keeps a SHARED vault in order
@@ -128,6 +129,7 @@ try:
     obs = getattr(m, 'OBSIDIAN', {}) or {}
     print('OBSIDIAN_MIN_PAGES=' + str(obs.get('expected_min_pages', 10)))
     print('LOG_ORDER_BASELINE=' + str(int(getattr(m, 'LOG_ORDER_BASELINE', 0))))
+    print('LOG_DATE_DRIFT_BASELINE=' + str(int(getattr(m, 'LOG_DATE_DRIFT_BASELINE', 0))))
     svc = getattr(m, 'SERVICES', {}) or {}
     print('HERMES_URL=' + str(svc.get('hermes_health_url', '')))
     print('PAPERCLIP_URL=' + str(svc.get('paperclip_health_url', '')))
@@ -212,6 +214,8 @@ except Exception as e:
   LIMITLESS_OBSIDIAN_MIN_PAGES=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^OBSIDIAN_MIN_PAGES=' | cut -d= -f2-)
   LIMITLESS_LOG_ORDER_BASELINE=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^LOG_ORDER_BASELINE=' | cut -d= -f2-)
   LIMITLESS_LOG_ORDER_BASELINE="${LIMITLESS_LOG_ORDER_BASELINE:-0}"
+  LIMITLESS_LOG_DRIFT_BASELINE=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^LOG_DATE_DRIFT_BASELINE=' | cut -d= -f2-)
+  LIMITLESS_LOG_DRIFT_BASELINE="${LIMITLESS_LOG_DRIFT_BASELINE:-0}"
   LIMITLESS_HERMES_URL=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^HERMES_URL=' | cut -d= -f2-)
   LIMITLESS_PAPERCLIP_URL=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^PAPERCLIP_URL=' | cut -d= -f2-)
   LIMITLESS_VAULT_OWNER=$(echo "$LIMITLESS_MANIFEST_RAW" | grep '^VAULT_OWNER=' | cut -d= -f2-)
@@ -794,29 +798,63 @@ if [ -r "$VAULT/wiki/index.md" ]; then
   # naming the new entry and the date you measured it.
   # Per-vault since 2026-09-23: each vault records ITS OWN historical count as
   # LOG_ORDER_BASELINE in .limitless-project.py (a fresh vault has 0).
+  #
+  # 🔴 SPLIT 2026-10-02 — TWO DIFFERENT FAULTS WERE SHARING ONE COUNT.
+  # A backward step of EXACTLY ONE DAY is not a prepend. Measured on this vault's
+  # log: 24 of 37 backward steps were one day, every recent one an entry APPENDED
+  # at the end after 8pm Eastern, dated by a UTC calendar (already tomorrow) next
+  # to entries dated by the Eastern one — e.g. 2026-09-30 20:37 EDT, `779a55d`,
+  # dated its entry 10-01. The other 13 (all June or earlier, steps of 2–25 days)
+  # were real prepends. Lumped together, the count rose with every evening session
+  # and Roll Call told each one it had prepended, with a fix ("move it to the
+  # end") that cannot apply to an entry already at the end. Twice a session raised
+  # the baseline instead (32 -> 34 on 09-30, already noting "appends, not
+  # prepends"), which hid the drift without fixing it. Now:
+  #   LOG_ORDER_BASELINE       = steps of 2+ days  (prepend / out-of-order insert)
+  #   LOG_DATE_DRIFT_BASELINE  = steps of exactly 1 day (two calendars in use)
+  # Convention since 2026-10-02 (vault CLAUDE.md § Logging convention rule 5): an
+  # entry is dated by the EASTERN date of the day it is written.
   LOG_ORDER_BASELINE="$LIMITLESS_LOG_ORDER_BASELINE"
+  LOG_DRIFT_BASELINE="$LIMITLESS_LOG_DRIFT_BASELINE"
   LOG_MD="$VAULT/wiki/log.md"
   if [ -r "$LOG_MD" ]; then
     LOG_HEADS_N=$(grep -c '^## \[' "$LOG_MD" 2>/dev/null || true)
     LOG_HEADS_N="${LOG_HEADS_N:-0}"
-    # ISO dates compare correctly as strings; awk sees one date per line.
-    LOG_BACKWARD=$(grep -oE '^## \[[0-9]{4}-[0-9]{2}-[0-9]{2}' "$LOG_MD" 2>/dev/null \
+    # awk sees one YYYY-MM-DD per line; jdn() turns it into a day number so the
+    # size of each backward step is known. Prints "<2+ day steps> <1 day steps>".
+    LOG_STEPS=$(grep -oE '^## \[[0-9]{4}-[0-9]{2}-[0-9]{2}' "$LOG_MD" 2>/dev/null \
       | sed 's/^## \[//' \
-      | awk 'NR>1 && $0 < prev { n++ } { prev = $0 } END { print n+0 }')
-    LOG_BACKWARD="${LOG_BACKWARD:-0}"
+      | awk -F- 'function jdn(Y,M,D,  a,y,m){a=int((14-M)/12);y=Y+4800-a;m=M+12*a-3;
+                   return D+int((153*m+2)/5)+365*y+int(y/4)-int(y/100)+int(y/400)-32045}
+                 { j=jdn($1+0,$2+0,$3+0) }
+                 NR>1 && j < prev { if (prev-j == 1) one++; else big++ }
+                 { prev=j } END { print big+0, one+0 }')
+    LOG_BACKWARD=$(echo "${LOG_STEPS:-0 0}" | awk '{print $1+0}')
+    LOG_DRIFT=$(echo "${LOG_STEPS:-0 0}" | awk '{print $2+0}')
     if [ "$LOG_HEADS_N" -eq 0 ]; then
       # COVERAGE FLOOR: a zero-heading scan and an in-order log are otherwise
       # indistinguishable, and the former is a broken check, not a clean bill.
       warn "log-order check scanned 0 entry headings in wiki/log.md — the check is vacuous" \
            "expected lines matching '^## [YYYY-MM-DD]'; verify the grep in tools/limitless-preflight.sh"
-    elif [ "$LOG_BACKWARD" -gt "$LOG_ORDER_BASELINE" ]; then
-      warn "wiki/log.md ORDER REGRESSED — $LOG_BACKWARD backward date transition(s) across $LOG_HEADS_N entries, baseline $LOG_ORDER_BASELINE: a session PREPENDED instead of appending" \
-           "move the new entry to the END of wiki/log.md (CLAUDE.md: append-only). Do NOT reflow the file — 19 entries carry 'the entry above' references. Cite entries as '[YYYY-MM-DD] op | label', never by line number."
-    elif [ "$LOG_BACKWARD" -lt "$LOG_ORDER_BASELINE" ]; then
-      warn "wiki/log.md order IMPROVED ($LOG_BACKWARD backward transitions, baseline $LOG_ORDER_BASELINE) — the baseline is stale" \
-           "set LOG_ORDER_BASELINE = $LOG_BACKWARD in .limitless-project.py so the check keeps its teeth"
     else
-      ok "wiki/log.md order held ($LOG_HEADS_N entries, $LOG_BACKWARD backward transitions = baseline)"
+      if [ "$LOG_BACKWARD" -gt "$LOG_ORDER_BASELINE" ]; then
+        warn "wiki/log.md ORDER REGRESSED — $LOG_BACKWARD out-of-order step(s) of 2+ days across $LOG_HEADS_N entries, baseline $LOG_ORDER_BASELINE: an entry went in somewhere other than the end, or was appended with a much older date" \
+             "find it (an entry dated 2+ days before the one above it). If it sits at the END it was a late append: leave it and name it when raising the baseline. If it is anywhere else, move it to the END (CLAUDE.md: append-only). Never reflow the file. Cite entries as '[YYYY-MM-DD] op | label', never by line number."
+      elif [ "$LOG_BACKWARD" -lt "$LOG_ORDER_BASELINE" ]; then
+        warn "wiki/log.md order IMPROVED ($LOG_BACKWARD steps of 2+ days, baseline $LOG_ORDER_BASELINE) — the baseline is stale" \
+             "set LOG_ORDER_BASELINE = $LOG_BACKWARD in .limitless-project.py so the check keeps its teeth"
+      else
+        ok "wiki/log.md order held ($LOG_HEADS_N entries, $LOG_BACKWARD out-of-order steps of 2+ days = baseline)"
+      fi
+      if [ "$LOG_DRIFT" -gt "$LOG_DRIFT_BASELINE" ]; then
+        warn "wiki/log.md DATE MISMATCH — $LOG_DRIFT one-day backward step(s), baseline $LOG_DRIFT_BASELINE: a session dated its entry by a different calendar (UTC instead of Eastern, usually after 8pm)" \
+             "do NOT move the entry. Date new entries by the Eastern date of the day you write them (vault CLAUDE.md § Logging convention rule 5); once you have confirmed which entry it is, set LOG_DATE_DRIFT_BASELINE = $LOG_DRIFT in .limitless-project.py and name it there."
+      elif [ "$LOG_DRIFT" -lt "$LOG_DRIFT_BASELINE" ]; then
+        warn "wiki/log.md date mismatches FELL ($LOG_DRIFT, baseline $LOG_DRIFT_BASELINE) — the baseline is stale" \
+             "set LOG_DATE_DRIFT_BASELINE = $LOG_DRIFT in .limitless-project.py"
+      else
+        ok "wiki/log.md dates held ($LOG_DRIFT one-day steps = baseline)"
+      fi
     fi
   fi
 fi

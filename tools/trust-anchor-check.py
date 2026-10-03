@@ -514,10 +514,36 @@ def _check_rulings_manifest(canon, man):
                 add(f"{man}: unreadable line {raw[:60]!r}", "each line is 'H<TAB>heading' or 'Q<TAB>quote'")
                 continue
             if not ok:
-                missing.append(val)
-    for v in missing[:10]:
-        add(f"{canon} lost a listed ruling: {v[:110]}",
-            f"restore it from the history file; if Matt superseded it, remove its line from {man}")
+                missing.append((kind, val))
+    # A heading that is merely REWORDED reads exactly like a lost one to the exact match above.
+    # Added 2026-10-02: ruling #16 was reworded for 0281 ("…it is the EXPAND invariant" ->
+    # "…it is a leftover name"), Roll Call said "lost a listed ruling", and two sessions
+    # passed that on to Matt as a missing ruling — one calling its remover "not provable".
+    # So name the closest heading still in the file: same numbering (e.g. "### 16.") first,
+    # else the most similar heading at the same level.
+    import difflib
+    headings = [l for l in text.split("\n") if l.startswith("#")]
+
+    def _closest(val):
+        level = val.split(" ", 1)[0]
+        m = re.match(r"^(#+\s+\d+[a-z]?\.)", val)
+        if m:
+            same_no = [h for h in headings if h.startswith(m.group(1) + " ")]
+            if same_no:
+                return same_no[0]
+        pool = [h for h in headings if h.split(" ", 1)[0] == level]
+        best = difflib.get_close_matches(val, pool, n=1, cutoff=0.6)
+        return best[0] if best else None
+
+    for kind, v in missing[:10]:
+        near = _closest(v) if kind == "H" else None
+        if near:
+            add(f"{canon} no longer has listed heading: {v[:110]} — REWORDED? closest heading now: {near[:110]}",
+                f"if the rewording keeps Matt's ruling, replace that line in {man} with the new heading; "
+                "if it changed the ruling, restore the old text from the history file")
+        else:
+            add(f"{canon} lost a listed ruling: {v[:110]}",
+                f"restore it from the history file; if Matt superseded it, remove its line from {man}")
     if len(missing) > 10:
         add(f"{canon} lost {len(missing) - 10} more listed rulings", f"diff it against the history file next to {man}")
 
