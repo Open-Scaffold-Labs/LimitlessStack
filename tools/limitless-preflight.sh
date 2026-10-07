@@ -2367,7 +2367,7 @@ fi
 echo ""
 echo "  • NotebookLM     → Invoke Skill(notebooklm) for ANY NotebookLM operation."
 echo "                      CLI always via mcp__desktop-commander__start_process("
-echo "                        command=\"notebooklm use <id> && notebooklm ask '...'\","
+echo "                        command=\"notebooklm ask -n <id> --new --yes '...'\","
 echo "                        shell=\"zsh\", timeout_ms=90000)"
 echo "                      Do NOT pip-install notebooklm-py or run notebooklm login in sandbox"
 echo "                      (no display, wiped each session)."
