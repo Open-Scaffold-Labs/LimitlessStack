@@ -490,7 +490,7 @@ def cmd_delete(source_id: str) -> bool:
 def _strip_for_compare(s: str) -> str:
     """Normalize markdown text for cross-NotebookLM-indexer comparison.
     The NotebookLM indexer strips or rewrites:
-      - backticks (code spans)
+      - backticks (code spans) — each becomes a word break, not nothing
       - markdown link brackets [text] and (url)
       - heading hash prefixes (#, ##, ###)
       - wiki-link double brackets [[target]] → target
@@ -509,10 +509,19 @@ def _strip_for_compare(s: str) -> str:
     hits 1-2/5 before, 3-5/5 with bullets stripped; overview.md (passing)
     stayed 5/5; markers against a DIFFERENT file's text stayed 0-1/5. The
     threshold and the marker count are unchanged.
+
+    Code spans, the same day: the index keeps a word break where a backtick
+    was ("`a`, `b`" reads "a , b" there), so deleting the backtick joined what
+    the notebook keeps apart. With bullets alone, self-heal-pipeline.md fell
+    from 3/5 to 2/5 when its markers shifted onto two code spans. Both fixes,
+    measured on all 40 sources of the wiki route: 35 passed before, 40 after
+    (none at 3/5 or below); each file's markers against the next file's text
+    reached at most 1/5, before and after.
     """
     # Strip common markdown punctuation that NotebookLM normalizes away
     s = re.sub(r"^[ \t]*[-+][ \t]+", "", s, flags=re.MULTILINE)  # list bullets (first: as measured)
-    s = re.sub(r"[`*_]", "", s)          # code spans, bold, italic
+    s = s.replace("`", " ")              # code spans: a backtick leaves a word break in the index
+    s = re.sub(r"[*_]", "", s)           # bold, italic
     s = re.sub(r"\[\[([^\]]+)\]\]", r"\1", s)  # wiki-links
     s = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", s)  # markdown links
     s = re.sub(r"^#+\s*", "", s, flags=re.MULTILINE)  # heading markers
