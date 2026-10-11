@@ -495,11 +495,23 @@ def _strip_for_compare(s: str) -> str:
       - heading hash prefixes (#, ##, ###)
       - wiki-link double brackets [[target]] → target
       - emphasis markers (*, _, **)
+      - list bullets ("- ", "+ ") at the start of a line
       - collapses whitespace
     Apply the same transformations before comparing so our verify check
     doesn't throw false negatives on markdown formatting differences.
+
+    List bullets added 2026-10-10: the indexed text has no "- " where a list
+    item starts ("…CI green) - Matt greenlit…" locally is "…CI green) Matt
+    greenlit…" in the notebook), so a 30-char marker that straddled a bullet
+    missed although every word of it was there. That alone made all 6 of the
+    6 "stale" verdicts in that day's --only wiki --verify-existing run (log.md,
+    index.md, llm-wiki-pattern.md, openscaffold-core.md, matt.md, dale.md):
+    hits 1-2/5 before, 3-5/5 with bullets stripped; overview.md (passing)
+    stayed 5/5; markers against a DIFFERENT file's text stayed 0-1/5. The
+    threshold and the marker count are unchanged.
     """
     # Strip common markdown punctuation that NotebookLM normalizes away
+    s = re.sub(r"^[ \t]*[-+][ \t]+", "", s, flags=re.MULTILINE)  # list bullets (first: as measured)
     s = re.sub(r"[`*_]", "", s)          # code spans, bold, italic
     s = re.sub(r"\[\[([^\]]+)\]\]", r"\1", s)  # wiki-links
     s = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", s)  # markdown links
