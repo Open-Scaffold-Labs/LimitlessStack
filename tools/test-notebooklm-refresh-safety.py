@@ -86,6 +86,13 @@ class Safety(unittest.TestCase):
  def test_corrupt_receipt_is_not_silently_reset(self):
   path=self.tools/'broken.json';path.write_text('{')
   with self.assertRaises(rf.SyncVerificationError):rf.load_state(path)
+ def test_readonly_count_can_run_while_writer_lock_is_held(self):
+  import shutil
+  for name in ['notebooklm-wiki-refresh.py','notebooklm_sync_safety.py','notebooklm_log_exports.py']:
+   shutil.copy2(ROOT/name,self.tools/name)
+  with safety.sync_lock(self.tools):
+   p=subprocess.run([sys.executable,'-B',str(self.tools/'notebooklm-wiki-refresh.py'),'--count-routed','wiki'],capture_output=True,text=True)
+  self.assertEqual(p.returncode,0,p.stderr);self.assertEqual(p.stdout.strip(),'1')
  def test_concurrent_refresh_lock_rejects_second_writer(self):
   with safety.sync_lock(self.tools):
    with self.assertRaisesRegex(RuntimeError,'Another NotebookLM refresh'):

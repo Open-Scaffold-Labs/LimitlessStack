@@ -1403,9 +1403,17 @@ def run_verify_existing(labels_to_run: list, do_reminder: bool, dry_run: bool) -
 
 if __name__ == "__main__":
     try:
-        with _SAFETY.sync_lock(STATE_DIR):
+        inspection = any(flag in sys.argv for flag in (
+            "--help", "--dry-run", "--count-routed", "--newest-routed", "--check-coverage",
+            "--check-caps", "--check-tracked")) and "--repair-tracked" not in sys.argv
+        if inspection:
+            # Read-only preflight/planning must coexist with a refresh writer
+            # and must never collect its recovery journals.
             main()
-            _SAFETY.finish_receipts(STATE_DIR)
+        else:
+            with _SAFETY.sync_lock(STATE_DIR):
+                main()
+                _SAFETY.finish_receipts(STATE_DIR)
     except (SyncVerificationError, RuntimeError, _LOG_EXPORTS.LogExportError) as exc:
         print(f"SYNC FAILED: {exc}", file=sys.stderr)
         sys.exit(1)
