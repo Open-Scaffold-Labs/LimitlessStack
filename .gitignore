@@ -9,3 +9,8 @@ tools/.recall-counter.tsv
 # source IDs). A refresh run from this repo drops one here; it must never be
 # published from the public canonical.
 tools/.notebooklm-*-state.json
+
+# Generated NotebookLM uploads and machine-local recovery/refresh lock.
+tools/notebooklm-exports/
+tools/.notebooklm-pending/
+tools/.notebooklm-sync.lock

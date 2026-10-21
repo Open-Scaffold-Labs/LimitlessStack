@@ -21,7 +21,7 @@ check() { local label="$1" want="$2" got="$3"; [ "$got" = "$want" ] && ok "$labe
 V="$W/vault "   # ends in a space on purpose, like the shared vault
 build() {   # $1 = the limitless_member.py to install
   rm -rf "$V"; mkdir -p "$V/tools" "$V/wiki/apps" "$V/wiki/synthesis" "$V/wiki/concepts" "$V/members/dale"
-  cp "$HERE/notebooklm-wiki-refresh.py" "$HERE/authorship-guard.py" "$V/tools/"
+  cp "$HERE/notebooklm-wiki-refresh.py" "$HERE/notebooklm_sync_safety.py" "$HERE/notebooklm_log_exports.py" "$HERE/authorship-guard.py" "$V/tools/"
   cp "$1" "$V/tools/limitless_member.py"
   cat > "$V/.limitless-project.py" <<'EOF'
 PROJECT_ID = "t"

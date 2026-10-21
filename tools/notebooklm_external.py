@@ -223,7 +223,8 @@ def _load(state_path: Path) -> dict:
 
 def _save(state_path: Path, state: dict) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps(state, indent=2))
+    import notebooklm_sync_safety
+    notebooklm_sync_safety.save_json(state_path, state)
 
 
 def _sources(rf, notebook_id: str) -> list[dict] | None:
@@ -331,11 +332,7 @@ def sync_externals(rf, label: str, dry_run: bool = False, force: bool = False) -
                     if not (entry and entry.get("source_id") == old and entry.get("sha256") == sha
                             and entry.get("verified_at")):
                         print(f"  [{display}] ~ {'replace' if old else 'add'} external {title}")
-                        if old:
-                            sid, verified, _gone = rf.cmd_replace(staged, old)
-                        else:
-                            sid = rf.cmd_add(staged)
-                            verified = bool(sid) and rf.cmd_verify_content(sid, staged)
+                        sid, verified, _gone = rf.cmd_replace(staged, old)
                         if sid and not verified:
                             sid, verified, _gone = rf.heal_verify(staged, sid)
                         if sid and verified:

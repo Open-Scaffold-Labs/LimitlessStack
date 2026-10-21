@@ -25,6 +25,9 @@ State files at tools/.notebooklm-<label>-state.json map path -> {mtime, source_i
 Notebook IDs are hard-coded below; change them if you replicate this to another vault.
 """
 import argparse
+import hashlib
+import notebooklm_sync_safety as _SAFETY
+import notebooklm_log_exports as _LOG_EXPORTS
 import json
 import os
 import re
@@ -324,41 +327,39 @@ def run_nb(args: list[str]) -> subprocess.CompletedProcess:
 
 
 def activate_notebook(nbid: str) -> None:
-    """Pin the notebook for subsequent source-* subcommands.
-
-    Still calls `use` so that anything invoking the CLI outside run_nb (and
-    any human following up by hand) sees the expected context — but run_nb no
-    longer DEPENDS on it, which is what closes the race.
-    """
+    """Pin every source call without changing the CLI's shared context file."""
     global _ACTIVE_NOTEBOOK
     _ACTIVE_NOTEBOOK = nbid
-    subprocess.run(["notebooklm", "use", nbid],
-                   capture_output=True, text=True)
 
 
 def check_auth() -> bool:
-    """Verify NotebookLM auth is valid. Returns True if OK."""
-    result = subprocess.run(["notebooklm", "auth", "check", "--test"],
-                            capture_output=True, text=True)
-    if result.returncode != 0 or "fail" in result.stdout.lower():
-        print("AUTH EXPIRED — run 'notebooklm login' to re-authenticate.")
-        return False
-    return True
+    result = subprocess.run(["notebooklm", "auth", "check", "--test", "--passive", "--json"], capture_output=True, text=True)
+    try:
+        data = json.loads(result.stdout)
+    except ValueError:
+        data = {}
+    ok = result.returncode == 0 and data.get("status") == "ok" and data.get("checks", {}).get("token_fetch") is True
+    if not ok:
+        print("NotebookLM authentication did not pass a real token check; no source changes made", file=sys.stderr)
+    return ok
 
 
 # ── State file helpers (per-route) ───────────────────────────────────────
 def load_state(state_path: Path) -> dict:
-    if state_path.exists():
-        try:
-            return json.loads(state_path.read_text())
-        except Exception:
-            return {}
-    return {}
+    if not state_path.exists():
+        return {}
+    try:
+        state = json.loads(state_path.read_text())
+        if not isinstance(state, dict):
+            raise ValueError("state must be an object")
+        return state
+    except (ValueError, OSError) as exc:
+        raise SyncVerificationError(f"Cannot read {state_path}; refusing to discard its receipts") from exc
 
 
 def save_state(state_path: Path, state: dict) -> None:
-    state_path.parent.mkdir(parents=True, exist_ok=True)   # a teammate's first run
-    state_path.write_text(json.dumps(state, indent=2))
+    _SAFETY.save_json(state_path, state)
+    _SAFETY.finish_receipts(STATE_DIR)
 
 
 def iter_wiki_files():
@@ -385,12 +386,63 @@ def parse_source_list(output: str) -> dict:
     return title_to_id
 
 
+class SyncVerificationError(RuntimeError):
+    """A sync failed; existing sources and verified receipts must be retained."""
+
+
+def _processing_error_detail(source_id: str) -> str:
+    """Read the error metadata omitted by the CLI; never return source text."""
+    import asyncio
+    from notebooklm import NotebookLMClient
+    from notebooklm.rpc import RPCMethod
+
+    async def read():
+        async with NotebookLMClient.from_storage() as client:
+            result = await client.rpc_call(
+                RPCMethod.GET_SOURCE, [[source_id], [2], [2]],
+                allow_null=True, raise_on_null_status=True,
+            )
+            return result[0][3]
+
+    try:
+        block = asyncio.run(read())
+        return "processing metadata=" + json.dumps(block)
+    except Exception as exc:
+        return "processing metadata unavailable (" + type(exc).__name__ + ")"
+
+
+def _require_ready(source_id: str) -> None:
+    result = run_nb(["source", "wait", source_id, "--timeout", "120", "--json"])
+    try:
+        data = json.loads(result.stdout)
+    except (ValueError, TypeError):
+        data = {}
+    if result.returncode != 0 or data.get("status") != "ready":
+        reason = _processing_error_detail(source_id)
+        raise SyncVerificationError(
+            f"Source {source_id} is not READY (wait exit={result.returncode}, "
+            f"status={data.get('status', 'unknown')}); {reason}. "
+            "No prior source retired; no automatic re-upload."
+        )
+
+
 def cmd_add(path: Path) -> str | None:
     """Add a file, return source_id or None."""
-    result = run_nb(["source", "add", str(path)])
-    out = result.stdout + result.stderr
-    m = re.search(r"Added source:\s+([0-9a-f-]+)", out)
-    return m.group(1) if m else None
+    if not path.is_file():
+        raise SyncVerificationError(f"Upload input is not a file: {path}")
+    result = run_nb(["source", "add", str(path), "--type", "file", "--request-timeout", "90", "--json"])
+    try:
+        data = json.loads(result.stdout)
+    except (ValueError, TypeError):
+        data = {}
+    sid = (data.get("source") or {}).get("id")
+    if result.returncode != 0 or not sid:
+        raise SyncVerificationError(
+            f"Upload registration failed for {path.name} (exit={result.returncode}, "
+            f"candidate={sid or 'unknown'}); old source/receipt retained. "
+            "Do not retry an uncertain registration blindly."
+        )
+    return sid
 
 
 def cmd_refresh(source_id: str) -> bool:
@@ -401,7 +453,7 @@ def cmd_refresh(source_id: str) -> bool:
     NOT replace the indexed content. Historically we trusted this and spent
     weeks with stale content in notebooks (see wiki/log.md 2026-04-24 entry).
 
-    For file sources, use cmd_replace() instead — it does delete + add +
+    For file sources, use cmd_replace() instead — it does add + verify + retire +
     content verification.
     """
     result = run_nb(["source", "refresh", source_id])
@@ -632,11 +684,17 @@ def cmd_verify_content(source_id: str, path: Path, wait_retries: int = 5) -> boo
     Not size-related: the failures spanned 8KB to 259KB. Not a stale source_id
     either: state and notebook ids matched.
     """
+    _require_ready(source_id)
     delays = [3, 7, 15, 30, 60, 90, 120]
     local_text = path.read_text()
     prose_norm = _strip_for_compare(_prose_lines(local_text))
     # Prefer prose markers; fall back to whole-file only when prose is too thin.
     local_norm = prose_norm if len(prose_norm) >= 150 else _strip_for_compare(local_text)
+    required = []
+    if re.fullmatch(r"log-(?:recent|older-\d{3})\.md", path.name):
+        required = [local_norm[:80], local_norm[-120:]]
+        required += [_strip_for_compare(line) for line in local_text.splitlines() if re.match(r"^## \[\d{4}-", line)][-4:]
+        required = [m for m in required if m]
     L = len(local_norm)
     if L < 150:
         # Too-short files: fall back to single full-content check
@@ -712,7 +770,7 @@ def cmd_verify_content(source_id: str, path: Path, wait_retries: int = 5) -> boo
                     continue
             remote_text = _extract_content(tp.read_text())
             remote_norm = _strip_for_compare(remote_text)
-            if _check_short(remote_norm):
+            if remote_norm and _check_short(remote_norm) and all(m in remote_norm for m in required):
                 return True
         finally:
             # Remove the whole temp DIR (not just the file) — and anything the
@@ -721,307 +779,24 @@ def cmd_verify_content(source_id: str, path: Path, wait_retries: int = 5) -> boo
     return False
 
 
-_COLLIDING_BASENAMES: set[str] | None = None
 
 
-def colliding_basenames() -> set[str]:
-    """Basenames shared by more than one file the tools mirror.
-
-    NotebookLM identifies a source only by title, and cmd_add titles uploads by
-    FILENAME — so two vault files with the same basename are indistinguishable
-    once uploaded. `_claim_unique_title` deletes every OTHER source sharing a
-    title, which means for a colliding basename the two files cannibalise each
-    other: whichever syncs last deletes the other's source.
-
-    Proven, not theoretical: wiki/index.md and wiki/app-creation-reminders/
-    index.md both title as "index.md". The live index.md in cdaa7a43 was created
-    2026-07-31T16:57:20 and app-creation-reminders/index.md's tracked source_id
-    (7bbdf431) has been absent ever since — the sweep ate it.
-
-    The real fix is path-derived titles, which would mean re-seeding every
-    notebook's title→id mapping. Until then the sweep declines to act on a
-    colliding basename: leaving a suspected duplicate in place is recoverable,
-    deleting a distinct file's only source is not.
-    """
-    global _COLLIDING_BASENAMES
-    if _COLLIDING_BASENAMES is None:
-        # Scope collisions PER NOTEBOOK. The sweep only ever lists the active
-        # notebook, so two files sharing a basename are only ambiguous if they
-        # land in the SAME notebook. Counting vault-wide instead flags four
-        # false positives — claude-anti-patterns.md, limitless-stack.md,
-        # paperclip.md and limitless-stack-hub.md are each ONE file mirrored into
-        # both the default bucket and the reminder notebook, where a same-title
-        # source really is a ghost. Disabling the sweep for those would reopen
-        # the 2026-04-29 duplicate hole it was written to close.
-        collisions: set[str] = set()
-        buckets = {label: [p.name for p in paths] for label, paths in plan_routing().items()}
-        buckets["__reminder__"] = [
-            reminder_title_for(rel, Path(rel).name) for rel in REMINDER_FILES
-        ]
-        for names in buckets.values():
-            counts: dict[str, int] = {}
-            for n in names:
-                counts[n] = counts.get(n, 0) + 1
-            collisions |= {n for n, c in counts.items() if c > 1}
-        _COLLIDING_BASENAMES = collisions
-        if _COLLIDING_BASENAMES:
-            print(f"  ! ghost-dupe sweep DISABLED for ambiguous titles: "
-                  f"{', '.join(sorted(_COLLIDING_BASENAMES))} "
-                  f"(same basename, same notebook — a same-title source may be a "
-                  f"different file)")
-    return _COLLIDING_BASENAMES
 
 
-def _claim_unique_title(title: str, keep_sid: str) -> int:
-    """After uploading a source, sweep any OTHER sources in the active
-    notebook with the same title. Returns the number of ghost dupes deleted.
-
-    Defends against the NotebookLM API's eventual-consistency window where
-    cmd_replace's post-delete check shows the old source as gone, then the
-    source reappears (or was never actually deleted) after cmd_add. Without
-    this sweep, the result is two copies of the same file in the notebook
-    despite cmd_replace's own delete+verify protection — observed twice in
-    a single session 2026-04-29 (cdaa7a43/claude-anti-patterns.md and
-    ab4b7ccb/CLAUDE.md), confirming the failure mode is real and not rare.
-
-    Belt-and-suspenders: cmd_replace's first-line abort handles the
-    optimistic case (delete is visible as gone → safe to add); this sweep
-    handles the case where the API silently lied about the delete being
-    visible. See anti-pattern #12 for the full failure mode.
-    """
-    # Refuse to sweep an ambiguous title — see colliding_basenames(). A "dupe"
-    # under a shared basename is far more likely to be a DIFFERENT file's only
-    # source than a ghost of this one.
-    if title in colliding_basenames():
-        print(f"    ! ghost-dupe sweep SKIPPED for {title} — basename is shared by "
-              f"more than one mirrored file, so a same-title source may not be a dupe")
-        return 0
-
-    listing = run_nb(["source", "list", "--json"])
-    if listing.returncode != 0:
-        return 0
-    try:
-        data = json.loads(listing.stdout)
-    except Exception:
-        return 0
-    sources = data if isinstance(data, list) else data.get("sources", [])
-
-    same_title = [s for s in sources if (s.get("title") or "") == title]
-    if len(same_title) <= 1:
-        return 0  # no ghost dupes to sweep
-
-    swept = 0
-    for s in same_title:
-        sid = s.get("id") or s.get("source_id")
-        if not sid or sid == keep_sid:
-            continue  # the one we just uploaded — skip
-        # cmd_delete has its own pre/post-check guards; trust its bool here.
-        if cmd_delete(sid):
-            swept += 1
-    return swept
 
 
 def cmd_replace(path: Path, old_source_id: str | None) -> tuple[str | None, bool, bool]:
-    """Replace a source's content: ADD the new file, verify the content
-    actually landed in NotebookLM, then delete the old source by id.
+    """Register once, journal candidate, verify READY/indexed content, then retire prior ID.
 
-    ⚠ THE ORDER IN THIS SENTENCE IS LOAD-BEARING AND IT USED TO BE WRONG HERE.
-    This line read "delete the old one (if any), add the new file" for 17 days
-    after the code was inverted to add-first on 2026-08-03. A present-tense
-    docstring that outlives its code does not just mislead a reader — it
-    propagated verbatim into the vault CLAUDE.md (step 7) and into two session
-    handoffs, and it silently inverted the assumption `notebooklm-dedupe.py`
-    used to pick which duplicate to keep, which on 2026-08-20 produced a
-    recommendation to delete the only complete copy of wiki/log.md. Corrected
-    2026-08-20. If you change the order again, change this sentence in the same
-    commit and grep for the modules that reason about it.
-
-    Returns (new_source_id, verified, old_gone) — `old_gone` meaning the old
-    source is no longer in the notebook, so its state entry is invalid.
-
-    A non-None source_id with verified=False means the upload succeeded but the
-    content check failed — almost always means NotebookLM hasn't finished
-    indexing within the wait window. The caller should treat verified=False as a
-    failure mode and either retry or flag it prominently.
-
-    ⚠ `old_gone` EXISTS BECAUSE THIS FUNCTION COULD LOSE DATA (added 2026-08-01).
-    HISTORICAL — this describes the DELETE-first ordering that was in force until
-    2026-08-03; see the "ADD BEFORE DELETE" comment in the body for what runs now.
-    Back then step 1 deleted the old source BEFORE step 2 added the new one. If the
-    add then failed, the old source was GONE and there was no new one — permanent
-    loss of that source from the notebook. Until 2026-08-01 both that case and the harmless
-    "aborted before deleting anything" case returned a bare (None, False), so the
-    caller counted an ordinary `upload_failed` and LEFT THE STATE ENTRY POINTING AT
-    THE DELETED ID. State then reported the source present forever, the mtime
-    shortcut marked it "unchanged" on every subsequent run, and nothing ever
-    retried it. That is how 7 sources vanished from cdaa7a43 with state still
-    asserting them — 5 in a single run on 2026-07-14 09:06 EDT (a=0 r=0 u=44 uf=8:
-    five attempted replaces, five failures, five destroyed sources), the rest in
-    the uf>0 runs of 07-16 and 07-23.
-
-    So the two failure modes are now distinguishable and MUST be handled
-    differently by callers:
-      * (None, False, False) — nothing was removed; the old source is still live.
-        Keep the state entry; the next run retries.
-      * (None, False, True)  — the old source is not in the notebook and the
-        re-add failed. The caller MUST drop the state entry so the next run
-        treats it as a fresh add.
-
-    Within that second case this function distinguishes, in its own output, a
-    source THIS run deleted (real loss — "SOURCE LOST") from one that was already
-    missing before the call (a pre-existing orphan). Both invalidate the entry;
-    only the first is new damage. Don't collapse them in log lines — 6 of the
-    current orphans are the second kind and would cry wolf every night.
-
-    Triple-defended against ghost duplicates:
-      1. cmd_delete's own pre/post-check (existed before).
-      2. Re-list + abort if old source still present (existed before).
-      3. _claim_unique_title sweep AFTER successful add (added 2026-04-29
-         after observing the eventual-consistency window bypass guards 1+2).
+    The durable journal is a recovery receipt until the normal state checkpoint.
+    A failure retains the prior receipt and never starts an automatic re-upload.
     """
-    old_gone = False
-
-    # ── ADD BEFORE DELETE (2026-08-03) ────────────────────────────────────
-    # This function used to delete the old source FIRST. That is what turned a
-    # source-cap failure into permanent data loss: at 50/50 the add fails, and
-    # the old source had already been destroyed. It cost 17 sources in the
-    # 07-26..29 window and is the root cause of the whole July incident — the
-    # title collision everyone chased afterwards was downstream of the repair.
-    #
-    # Inverting the order means the old source is only removed once a
-    # replacement demonstrably exists. The trade is deliberate and worth stating:
-    #   * OLD: a replace was net-zero, so it still worked AT the cap — at the
-    #     price of destroying the source whenever the add then failed.
-    #   * NEW: a replace needs one slot of headroom, so at exactly 50/50 it
-    #     FAILS instead of churning — and fails with the old source intact.
-    # A bucket that stops syncing until someone frees a slot is recoverable.
-    # A bucket that eats sources is not. The preflight already warns at 47/50,
-    # so the cap is visible well before it becomes blocking.
-    #
-    # The ghost-duplicate defence still holds, because the old source is deleted
-    # BY ID (never by title) and the _claim_unique_title sweep runs afterwards.
-    # The window where both copies exist is seconds long, and a crash inside it
-    # leaves a duplicate — which the deduper cleans up. Duplicate is recoverable;
-    # deletion is not. That is the whole ordering argument.
-
-    # Step 1: ADD the replacement while the old source is still in place.
-    #
-    # DELIBERATELY A SINGLE ATTEMPT. The add failure at the cap is a CLI *parse*
-    # failure ("Failed to get SOURCE_ID from registration response"), so the
-    # upload may have partially registered. Retrying a possibly-successful add is
-    # how the nine duplicates appeared in cdaa7a43 on 2026-04-26.
-    new_sid = cmd_add(path)
-    if not new_sid:
-        # The old source was never touched — this is the entire point of the
-        # reordering. Distinguish "old still there" (no loss, nothing changed)
-        # from "old was ALREADY missing before this call" (a pre-existing
-        # orphan, so the entry is stale and must be dropped).
-        still_present = source_present(old_source_id) if old_source_id else None
-        if old_source_id and still_present is False:
-            old_gone = True
-            print(f"    ✗ stale entry — {old_source_id[:12]}… was already missing from the "
-                  f"notebook and the add failed (at the source cap?)")
-        else:
-            print(f"    ✗ add failed for {path.name} — old source left INTACT, no data lost. "
-                  f"If this is the source cap, free a slot; the replace will succeed next run.")
-        return None, False, old_gone
-
-    # Step 2: verify the new content actually indexed before removing the old.
-    verified = cmd_verify_content(new_sid, path)
-
-    # Step 3: NOW retire the old source, by ID.
-    if old_source_id and not old_source_id.startswith(new_sid[:8]):
-        cmd_delete(old_source_id)
-        # NotebookLM's listing has a ~1-2s eventual-consistency window after a
-        # delete; sleep before the post-check to cut the false reading rate.
-        time.sleep(2)
-        present = source_present(old_source_id)
-        if present is False:
-            old_gone = True
-        else:
-            # Not a loss — just a leftover copy. Say so plainly and let the
-            # sweep below (or the deduper) collect it.
-            print(f"    ! old source {old_source_id[:12]}… still present after delete — "
-                  f"duplicate left behind for the ghost-dupe sweep / deduper")
-    elif old_source_id:
-        old_gone = True
-
-    # Step 4: ghost-dupe sweep — collects any other same-title copy, including
-    # an old source whose explicit delete above didn't take. Declines to act on
-    # an ambiguous (shared) basename, which is why step 3 deletes by ID.
-    ghosts = _claim_unique_title(path.name, new_sid)
-    if ghosts > 0:
-        print(f"    ! ghost-dupe sweep removed {ghosts} stale copy/copies of {path.name}")
-
-    return new_sid, verified, old_gone
+    return _SAFETY.replace(sys.modules[__name__], path, old_source_id)
 
 
 def heal_verify(path: Path, sid: str | None, attempts: int = 2) -> tuple[str | None, bool, bool]:
-    """Auto-heal a content-verify failure. After an initial verify miss, retry
-    the delete+re-add+verify cure (cmd_replace) up to `attempts` times. This
-    automates the previously-MANUAL cure documented in the vault CLAUDE.md
-    end-of-session step 7 / anti-pattern #12 — turning the sync's verify-ONLY
-    loop into verify→correct (the loop-engineering "self-correct" piece).
-
-    Returns (source_id, verified, destroyed).
-
-    ⚠ CORRECTED 2026-08-01. This docstring used to claim cmd_replace "deletes the
-    current source BEFORE re-adding, so this never grows the notebook's source
-    count — safe even against the 50-source cap." The premise is right and the
-    conclusion is backwards: deleting first means it cannot grow the count, but it
-    CAN shrink it to zero for that source. At the cap, adds fail — so a heal that
-    deletes and then cannot re-add destroys the source outright. Worse, the old
-    loop left `cur` pointing at the sid it had just deleted, so the caller wrote
-    that dead id into state and recorded a routine verify_failed. Never grows ≠
-    safe. `destroyed=True` now propagates so callers drop the state entry instead
-    of enshrining a dead id."""
-    cur = sid
-
-    # ── BE PATIENT BEFORE BEING CLEVER (added 2026-08-01) ────────────────────
-    # The heal below re-uploads, and a re-upload RESTARTS INDEXING — so when the
-    # only problem is that indexing has not finished yet, the cure guarantees the
-    # disease: attempt 1 restarts the clock and fails, attempt 2 restarts it again
-    # and fails, and the run reports verify_failed having spent three uploads of
-    # quota to arrive there. That is exactly what happened on 2026-07-31/08-01
-    # after notebooklm-py 0.7.3 slowed the upload→retrievable gap: 6 of 6 replaced
-    # files "failed", every one of them actually fine.
-    #
-    # So: re-verify PATIENTLY first, with no upload at all. If the content is
-    # merely un-indexed, this fixes it for free. Only if a patient check still
-    # fails do we reach the delete+re-add cure — which is the genuinely-stale-
-    # source case heal_verify was written for (anti-pattern #12), and is left
-    # exactly as it was.
-    if cur:
-        print(f"    … patient re-verify for {path.name} (no re-upload) — indexing may still be catching up")
-        if cmd_verify_content(cur, path, wait_retries=7):
-            print(f"    ✓ verified on the patient re-check — no re-upload needed")
-            return cur, True, False
-
-    ever_destroyed = False
-    for i in range(1, attempts + 1):
-        print(f"    ↻ auto-heal {i}/{attempts} for {path.name} — re-add + re-verify")
-        new_sid, verified, destroyed = cmd_replace(path, cur)
-        if destroyed:
-            # The cure deleted the source. Remember it for the whole call: even if
-            # a later attempt succeeds we must not report the pre-delete sid, and
-            # if none succeeds the caller has to know the notebook lost the file.
-            ever_destroyed = True
-        if new_sid:
-            cur = new_sid
-        elif destroyed:
-            # Nothing left in the notebook under the old id. Drop it so the next
-            # attempt is a PURE add (cmd_replace skips its delete step when
-            # old_source_id is None) — that keeps the remaining retry budget
-            # usable without any duplicate risk, instead of re-deleting nothing.
-            cur = None
-        if verified:
-            print(f"    ✓ auto-healed on attempt {i}/{attempts}")
-            return cur, True, False
-    if ever_destroyed and not cur:
-        print(f"    ✗ auto-heal exhausted and the source is GONE from the notebook")
-        return None, False, True
-    print(f"    ✗ auto-heal exhausted after {attempts} attempts — surfacing verify_failed")
-    return cur, False, False
+    """Compatibility hook: patient read-only verification, never re-upload/delete."""
+    return sid, bool(sid) and cmd_verify_content(sid, path, wait_retries=7), False
 
 
 # ── Routing: bucket wiki files by route ───────────────────────────────────
@@ -1056,7 +831,113 @@ def plan_routing() -> dict[str, list[Path]]:
             if any(rel.startswith(p) for p in EXCLUDE_FROM_DEFAULT_BUCKET):
                 continue
             buckets[default_label].append(path)
+    exports = log_export_plan()
+    if exports:
+        source, directory, _metadata, planned = exports
+        for label, paths in buckets.items():
+            if source in paths:
+                index = paths.index(source)
+                paths[index:index+1] = [directory / name for name in planned.files]
     return buckets
+
+
+
+
+def log_export_plan():
+    cfg = _NB_MANIFEST.get("log_exports")
+    if not cfg:
+        return None
+    source = VAULT / cfg["path"]
+    metadata_path = STATE_DIR / ".notebooklm-log-exports.json"
+    prior = load_state(metadata_path) if metadata_path.exists() else None
+    try:
+        planned = _LOG_EXPORTS.plan(source.read_bytes(), prior, cfg.get("max_words", 300000))
+    except (OSError, _LOG_EXPORTS.LogExportError) as exc:
+        raise SyncVerificationError(f"Log exports were not changed: {exc}") from exc
+    return source, STATE_DIR / "notebooklm-exports", metadata_path, planned
+
+
+def prepare_log_exports(dry_run=False, verify_only=False):
+    got = log_export_plan()
+    if got is None:
+        return
+    source, directory, metadata_path, planned = got
+    print("[log exports] " + "  ".join(f"{n}: {len(b.decode().split())} words" for n,b in planned.files.items()))
+    if verify_only:
+        if any(not (directory/n).exists() or (directory/n).read_bytes() != b for n,b in planned.files.items()):
+            raise SyncVerificationError("Log exports need regeneration from the current log; run the scoped refresh before verifying")
+    elif not dry_run:
+        _LOG_EXPORTS.publish(directory, metadata_path, planned)
+
+
+def _sync_files(notebook_id, display, state_path, files, dry_run, force, prune):
+    if not state_path.exists() and files:
+        raise SyncVerificationError(f"No state file {state_path}; seed this route first")
+    state = load_state(state_path)
+    new_state = dict(state)
+    activate_notebook(notebook_id)
+    current = {p.relative_to(VAULT).as_posix(): p for p in files}
+    counts = dict(added=0, refreshed=0, deleted=0, unchanged=0, verify_failed=0, upload_failed=0, stale_dropped=0)
+    listing = run_nb(["source", "list", "--json"])
+    if listing.returncode:
+        raise SyncVerificationError("Cannot list route sources; nothing changed")
+    try:
+        listing_data = json.loads(listing.stdout)
+        live = listing_data if isinstance(listing_data, list) else listing_data["sources"]
+        ready_ids = {r.get("id") or r.get("source_id") for r in live if r.get("status") == "ready"}
+    except (ValueError, KeyError, TypeError) as exc:
+        raise SyncVerificationError("Cannot parse route source status; nothing changed") from exc
+    for rel, path in current.items():
+        mtime = path.stat().st_mtime if path.exists() else 0
+        digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else ""
+        entry = state.get(rel)
+        if (entry and entry.get("mtime") == mtime and entry.get("verified_at")
+                and entry.get("source_id") in ready_ids
+                and entry.get("sha256", digest) == digest and not force):
+            counts["unchanged"] += 1
+            continue
+        action = "refreshed" if entry else "added"
+        print(f"  [{display}] ~ {'replace' if entry else 'add'} {rel}")
+        if dry_run:
+            counts[action] += 1
+            continue
+        sid, verified, _gone = cmd_replace(path, entry.get("source_id") if entry else None)
+        if not sid or not verified:
+            raise SyncVerificationError(f"No verified replacement for {rel}; prior receipt retained")
+        if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            raise SyncVerificationError(f"{rel} changed during upload; candidate journal retained for reconciliation")
+        new_state[rel] = {"mtime": mtime, "sha256": digest, "source_id": sid, "verified_at": time.time()}
+        save_state(state_path, new_state)
+        counts[action] += 1
+    # All current sources have passed verification or match an existing verified,
+    # READY receipt. In particular ALL log parts precede retirement of log.md.
+    if prune:
+        for rel, entry in state.items():
+            if rel in current:
+                continue
+            sid = entry["source_id"]
+            print(f"  [{display}] - retire {rel} ({sid})")
+            if not dry_run:
+                removed = cmd_delete(sid)
+                if not removed and source_present(sid):
+                    raise SyncVerificationError(f"Could not retire {rel}; its receipt was retained")
+                if not removed:
+                    counts["stale_dropped"] += 1
+                new_state.pop(rel, None)
+                save_state(state_path, new_state)
+            if dry_run or removed:
+                counts["deleted"] += 1
+    if not dry_run:
+        save_state(state_path, new_state)
+    print(f"[{display}] DONE  " + "  ".join(f"{k}: {v}" for k,v in counts.items()) + f"  dry_run: {dry_run}")
+    if not dry_run and any(counts[k] for k in ("added", "refreshed", "deleted")):
+        try:
+            report = TOOLS / "report-activity.sh"
+            if report.exists():
+                payload = dict(counts, route=display, notebook_id=notebook_id, force=force)
+                subprocess.run([str(report), "--source", "agent", "--event-type", "notebooklm_refresh", "--actor", "notebooklm-refresh", "--repo", "openscaffold-wiki", "--title", f"notebooklm {display} — {counts['added']} added · {counts['refreshed']} refreshed · {counts['deleted']} deleted", "--payload", json.dumps(payload)], check=False, timeout=10)
+        except Exception:
+            pass
 
 
 # ── Per-route seed/sync ──────────────────────────────────────────────────
@@ -1095,216 +976,7 @@ def seed_route(notebook_id: str, label: str, display: str, files: list[Path], dr
 
 
 def sync_route(notebook_id: str, label: str, display: str, files: list[Path], dry_run: bool, force: bool = False) -> None:
-    """Refresh/add/delete sources in `notebook_id` against the routed `files`."""
-    state_path = state_file_for(label)
-    state = load_state(state_path)
-    # Bail only if state file genuinely doesn't exist — empty state {} is
-    # valid (fresh seed against an empty notebook). The original check
-    # `if not state and files` falsely treated empty state as missing,
-    # which broke the freshly-init'd-project flow on 2026-04-29.
-    if not state_path.exists() and files:
-        print(f"[{display}] ERROR: no state file ({state_path.name}). Run with --seed first.",
-              file=sys.stderr)
-        return
-
-    activate_notebook(notebook_id)
-    current_files = {p.relative_to(VAULT).as_posix(): p for p in files}
-    new_state = dict(state)
-
-    added = refreshed = deleted = unchanged = 0
-    verify_failed = upload_failed = dropped_count = 0
-
-    # ── PERSIST AFTER EVERY MUTATION (added 2026-08-01) ──────────────────────
-    # This used to accumulate everything in `new_state` and call save_state ONCE
-    # after the whole loop. Every uploaded source_id therefore lived only in
-    # memory for the length of the run, while the deletes and uploads had already
-    # landed in NotebookLM. Any interruption — kill, timeout, exception in the
-    # delete loop — discarded the entire run's bookkeeping and left state
-    # pointing at source_ids that cmd_replace had already deleted.
-    #
-    # That is exactly what happened on 2026-07-27 between 16:58:07 and 17:00:27:
-    # nine sources were uploaded to cdaa7a43, the run stopped before save_state,
-    # and to this day six state entries name deleted ids while four of the
-    # uploaded sources are in the notebook tracked by nothing at all. There is no
-    # wiki-state commit on 07-27 at all.
-    #
-    # A partial run must leave partially-correct state, never stale state.
-    def _checkpoint() -> None:
-        if not dry_run:
-            save_state(state_path, new_state)
-
-    # Files on disk + routed here
-    for rel, path in current_files.items():
-        mtime = path.stat().st_mtime
-        entry = state.get(rel)
-        # --force bypasses the mtime-equality shortcut: every tracked file is
-        # treated as changed and re-uploaded + verified. Use this after a
-        # script bug fix (like the 2026-04-24 cmd_refresh no-op discovery)
-        # to force the notebooks to reflect current file contents.
-        if entry and entry["mtime"] == mtime and not force:
-            unchanged += 1
-            continue
-        if entry:
-            # Changed file: replace (delete old + add new + verify content).
-            # Historically this called cmd_refresh() which is a NO-OP for file
-            # sources — see cmd_refresh() docstring and wiki/log.md 2026-04-24.
-            print(f"  [{display}] ~ replace {rel}")
-            if not dry_run:
-                sid, verified, destroyed = cmd_replace(path, entry["source_id"])
-                if sid and not verified:
-                    sid, verified, destroyed = heal_verify(path, sid)
-                now_ts = time.time()
-                if sid and verified:
-                    new_state[rel] = {
-                        "mtime": mtime, "source_id": sid,
-                        "verified_at": now_ts,
-                    }
-                    refreshed += 1
-                    print(f"    ✓ content verified in notebook")
-                elif sid and not verified:
-                    # Upload succeeded but content check failed. Record the
-                    # source_id + leave verified_at absent so the preflight
-                    # flags this source as needing re-verification.
-                    new_state[rel] = {
-                        "mtime": mtime, "source_id": sid,
-                    }
-                    verify_failed += 1
-                    print(f"    ⚠ uploaded but CONTENT NOT VERIFIED — check notebook manually")
-                elif destroyed:
-                    # The old source was deleted and could not be re-added: the
-                    # notebook has LOST this file. Drop the entry rather than
-                    # keeping a dead source_id — a state entry that names a
-                    # deleted id is worse than no entry, because the mtime
-                    # shortcut then reports the file "unchanged" on every future
-                    # run and it is never retried. Dropping it makes the next run
-                    # treat this as a fresh add.
-                    new_state.pop(rel, None)
-                    dropped_count += 1
-                    upload_failed += 1
-                    print(f"    → state entry dropped for {rel} (source not in notebook) — next run re-adds it")
-                else:
-                    # Nothing was deleted; the old source is still live. Keep the
-                    # entry so the next run retries the replace.
-                    upload_failed += 1
-                    print(f"    ✗ REPLACE FAILED — {rel} left as-is in the notebook")
-                _checkpoint()
-            else:
-                refreshed += 1
-        else:
-            # New file (or newly routed here): add + verify
-            print(f"  [{display}] + add {rel}")
-            if not dry_run:
-                sid = cmd_add(path)
-                if sid:
-                    verified = cmd_verify_content(sid, path)
-                    # Ghost-dupe sweep: defends against a previous failed
-                    # refresh having left an orphan source for this filename.
-                    ghosts = _claim_unique_title(path.name, sid)
-                    if ghosts > 0:
-                        print(f"    ! ghost-dupe sweep removed {ghosts} stale copy/copies of {rel}")
-                    destroyed = False
-                    if not verified:
-                        sid, verified, destroyed = heal_verify(path, sid)
-                    now_ts = time.time()
-                    if not sid:
-                        # heal_verify's cure deleted the just-added source and
-                        # could not put it back. Record nothing — an entry with
-                        # source_id=None would break every later run.
-                        new_state.pop(rel, None)
-                        dropped_count += 1
-                        upload_failed += 1
-                        print(f"    → nothing recorded for {rel} (source not in notebook) — next run re-adds it")
-                        _checkpoint()
-                        continue
-                    entry_new = {"mtime": mtime, "source_id": sid}
-                    if verified:
-                        entry_new["verified_at"] = now_ts
-                        new_state[rel] = entry_new
-                        added += 1
-                        print(f"    ✓ content verified in notebook")
-                    else:
-                        new_state[rel] = entry_new
-                        verify_failed += 1
-                        print(f"    ⚠ uploaded but CONTENT NOT VERIFIED")
-                    _checkpoint()
-                else:
-                    upload_failed += 1
-                    print(f"    ✗ ADD FAILED for {rel}")
-            else:
-                added += 1
-
-    # Files that were in state but no longer on disk (or no longer routed here)
-    for rel in list(state.keys()):
-        if rel not in current_files:
-            print(f"  [{display}] - delete {rel}")
-            if not dry_run:
-                sid = state[rel]["source_id"]
-                if cmd_delete(sid):
-                    del new_state[rel]
-                    deleted += 1
-                    _checkpoint()
-                elif not source_present(sid):
-                    # cmd_delete returns False for "delete failed" AND for
-                    # "source was never there" — and the old code kept the entry
-                    # in both cases. So a state entry naming an already-deleted
-                    # source could NEVER be cleaned up by a prune: the entry
-                    # outlived the source forever. That is why the three June
-                    # handoffs pruned on 2026-07-14 still had state entries on
-                    # 2026-08-01 asserting they were in the notebook.
-                    # Nothing to delete means the entry is simply stale — drop it.
-                    del new_state[rel]
-                    dropped_count += 1
-                    print(f"    → stale entry dropped ({sid[:12]}… was already absent)")
-                    _checkpoint()
-                else:
-                    print(f"    ✗ delete FAILED for {rel} — source still present, entry kept")
-            else:
-                deleted += 1
-
-    _checkpoint()
-    summary = (f"[{display}] DONE  added: {added}  refreshed: {refreshed}  "
-               f"deleted: {deleted}  unchanged: {unchanged}  "
-               f"verify_failed: {verify_failed}  upload_failed: {upload_failed}  "
-               f"dry_run: {dry_run}"
-               + (f"  ⚠ stale entries dropped: {dropped_count}" if dropped_count else ""))
-    print(summary)
-
-    # Report this route's sync to /api/agent-activity. Best-effort, skipped on
-    # dry-run (only meaningful runs become rows). One row per route so the
-    # feed reads as "firehazmat refreshed", "wiki bucket refreshed", etc.
-    if not dry_run and (added or refreshed or deleted or verify_failed or upload_failed):
-        try:
-            helper = Path(__file__).resolve().parent / "report-activity.sh"
-            if helper.exists():
-                title = (f"notebooklm {display} — "
-                         f"{added} added · {refreshed} refreshed · {deleted} deleted"
-                         + (f" · {verify_failed} verify_failed" if verify_failed else "")
-                         + (f" · {upload_failed} upload_failed" if upload_failed else "")
-                         + (f" · {dropped_count} stale_dropped" if dropped_count else ""))
-                payload = json.dumps({
-                    "route":         label,
-                    "notebook_id":   notebook_id,
-                    "added":         added, "refreshed": refreshed, "deleted": deleted,
-                    "unchanged":     unchanged,
-                    "verify_failed": verify_failed, "upload_failed": upload_failed,
-                    # Recorded separately from upload_failed so this is greppable
-                    # in lsh_activity. Reconstructing the 2026-07-14 loss required
-                    # inferring destroyed sources from (refreshed=0, upload_failed=8).
-                    "stale_dropped": dropped_count,
-                    "force":         force,
-                })
-                subprocess.run(
-                    [str(helper),
-                     "--source",     "agent",
-                     "--event-type", "notebooklm_refresh",
-                     "--actor",      "notebooklm-refresh",
-                     "--repo",       "openscaffold-wiki",
-                     "--title",      title,
-                     "--payload",    payload],
-                    check=False, timeout=10,
-                )
-        except Exception:
-            pass  # logging is best-effort
+    _sync_files(notebook_id, display, state_file_for(label), files, dry_run, force, prune=True)
 
 
 # ── Reminder notebook helpers ────────────────────────────────────────────
@@ -1316,17 +988,11 @@ def iter_reminder_files():
 
 
 def load_reminder_state() -> dict:
-    if REMINDER_STATE_FILE.exists():
-        try:
-            return json.loads(REMINDER_STATE_FILE.read_text())
-        except Exception:
-            return {}
-    return {}
+    return load_state(REMINDER_STATE_FILE)
 
 
 def save_reminder_state(state: dict) -> None:
-    REMINDER_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    REMINDER_STATE_FILE.write_text(json.dumps(state, indent=2))
+    save_state(REMINDER_STATE_FILE, state)
 
 
 def seed_reminder(dry_run: bool) -> None:
@@ -1363,148 +1029,10 @@ def seed_reminder(dry_run: bool) -> None:
 
 
 def sync_reminder(dry_run: bool, force: bool = False) -> None:
-    """Refresh changed files in ab4b7ccb. Add any allowlisted files missing from notebook. Never delete."""
-    state = load_reminder_state()
-    # Bail only if state file genuinely doesn't exist — empty {} state is
-    # valid for a fresh seed against an empty reminder notebook.
-    if not REMINDER_STATE_FILE.exists():
-        print(f"\n[reminder] no state file — run with --seed first to map source IDs.",
-              file=sys.stderr)
-        return
-
-    activate_notebook(REMINDER_NOTEBOOK_ID)
-    new_state = dict(state)
-    refreshed = added = unchanged = missing_on_disk = 0
-    verify_failed = upload_failed = dropped_count = 0
-
-    # Checkpoint after every mutation — see the long note in sync_route. The
-    # reminder bucket has the same write-after-mutate window.
-    def _checkpoint() -> None:
-        if not dry_run:
-            save_reminder_state(new_state)
-
-    for path in iter_reminder_files():
-        rel = path.relative_to(VAULT).as_posix()
-        mtime = path.stat().st_mtime
-        entry = state.get(rel)
-        if entry and entry["mtime"] == mtime and not force:
-            unchanged += 1
-            continue
-        if entry:
-            # Replace: delete old + add new + verify. See cmd_refresh docstring.
-            print(f"  [reminder] ~ replace {rel}")
-            if not dry_run:
-                sid, verified, destroyed = cmd_replace(path, entry["source_id"])
-                if sid and not verified:
-                    sid, verified, destroyed = heal_verify(path, sid)
-                now_ts = time.time()
-                if sid and verified:
-                    new_state[rel] = {
-                        "mtime": mtime, "source_id": sid,
-                        "verified_at": now_ts,
-                    }
-                    refreshed += 1
-                    print(f"    ✓ content verified in notebook")
-                elif sid and not verified:
-                    new_state[rel] = {"mtime": mtime, "source_id": sid}
-                    verify_failed += 1
-                    print(f"    ⚠ uploaded but CONTENT NOT VERIFIED — check notebook manually")
-                elif destroyed:
-                    new_state.pop(rel, None)
-                    dropped_count += 1
-                    upload_failed += 1
-                    print(f"    → state entry dropped for {rel} (source not in notebook) — next run re-adds it")
-                else:
-                    upload_failed += 1
-                    print(f"    ✗ REPLACE FAILED — {rel} left as-is in the notebook")
-                _checkpoint()
-            else:
-                refreshed += 1
-        else:
-            print(f"  [reminder] + add {rel}")
-            if not dry_run:
-                sid = cmd_add(path)
-                if sid:
-                    verified = cmd_verify_content(sid, path)
-                    # Ghost-dupe sweep — same as sync_route's new-file branch.
-                    # Uses path.name because cmd_add titles uploads by filename.
-                    # REMINDER_TITLE_ALIASES is only relevant for seed matching
-                    # of pre-existing manually-renamed sources; new uploads
-                    # don't pick up the alias.
-                    ghosts = _claim_unique_title(path.name, sid)
-                    if ghosts > 0:
-                        print(f"    ! ghost-dupe sweep removed {ghosts} stale copy/copies of {rel}")
-                    destroyed = False
-                    if not verified:
-                        sid, verified, destroyed = heal_verify(path, sid)
-                    now_ts = time.time()
-                    if not sid:
-                        new_state.pop(rel, None)
-                        dropped_count += 1
-                        upload_failed += 1
-                        print(f"    → nothing recorded for {rel} (source not in notebook) — next run re-adds it")
-                        _checkpoint()
-                        continue
-                    entry_new = {"mtime": mtime, "source_id": sid}
-                    if verified:
-                        entry_new["verified_at"] = now_ts
-                        new_state[rel] = entry_new
-                        added += 1
-                        print(f"    ✓ content verified in notebook")
-                    else:
-                        new_state[rel] = entry_new
-                        verify_failed += 1
-                        print(f"    ⚠ uploaded but CONTENT NOT VERIFIED")
-                    _checkpoint()
-                else:
-                    upload_failed += 1
-                    print(f"    ✗ ADD FAILED for {rel}")
-            else:
-                added += 1
-
-    # Note any allowlisted files that no longer exist on disk (not auto-deleted)
+    _sync_files(REMINDER_NOTEBOOK_ID, "reminder", REMINDER_STATE_FILE, list(iter_reminder_files()), dry_run, force, prune=False)
     for rel in REMINDER_FILES:
         if not (VAULT / rel).exists():
-            print(f"  ! {rel} listed in REMINDER_FILES but not found on disk (notebook source NOT removed)")
-            missing_on_disk += 1
-
-    if not dry_run:
-        save_reminder_state(new_state)
-    summary = (f"[reminder] DONE  added: {added}  refreshed: {refreshed}  "
-               f"unchanged: {unchanged}  missing_on_disk: {missing_on_disk}  "
-               f"verify_failed: {verify_failed}  upload_failed: {upload_failed}  "
-               f"dry_run: {dry_run}")
-    print(summary)
-
-    # Same activity-report pattern as sync_route, scoped to the reminder bucket.
-    if not dry_run and (added or refreshed or verify_failed or upload_failed):
-        try:
-            helper = Path(__file__).resolve().parent / "report-activity.sh"
-            if helper.exists():
-                title = (f"notebooklm reminder bucket — "
-                         f"{added} added · {refreshed} refreshed"
-                         + (f" · {verify_failed} verify_failed" if verify_failed else "")
-                         + (f" · {upload_failed} upload_failed" if upload_failed else ""))
-                payload = json.dumps({
-                    "route":           "reminder",
-                    "notebook_id":     REMINDER_NOTEBOOK_ID,
-                    "added":           added, "refreshed": refreshed,
-                    "unchanged":       unchanged, "missing_on_disk": missing_on_disk,
-                    "verify_failed":   verify_failed, "upload_failed": upload_failed,
-                    "force":           force,
-                })
-                subprocess.run(
-                    [str(helper),
-                     "--source",     "agent",
-                     "--event-type", "notebooklm_refresh",
-                     "--actor",      "notebooklm-refresh",
-                     "--repo",       "openscaffold-wiki",
-                     "--title",      title,
-                     "--payload",    payload],
-                    check=False, timeout=10,
-                )
-        except Exception:
-            pass
+            print(f"  ! {rel} listed in REMINDER_FILES but not on disk; notebook source retained")
 
 
 # ── Notebook coverage check ──────────────────────────────────────────────
@@ -1729,7 +1257,10 @@ def main():
     if args.newest_routed:
         newest = 0
         for p in plan_routing().get(args.newest_routed, []):
-            newest = max(newest, int(p.stat().st_mtime))
+            newest = max(newest, int(p.stat().st_mtime)) if p.exists() else newest
+        got = log_export_plan()
+        if got and any(got[1] / n in plan_routing().get(args.newest_routed, []) for n in got[3].files):
+            newest = max(newest, int(got[0].stat().st_mtime))
         print(newest)
         sys.exit(0)
 
@@ -1737,31 +1268,7 @@ def main():
     # it never touches the API, and gating it on auth made the preflight's
     # coverage line hang on `notebooklm auth check` (observed 2026-08-24).
     if args.count_routed:
-        n = 0
-        for path in sorted(VAULT.glob("wiki/**/*.md")):
-            rel = str(path.relative_to(VAULT))
-            # MUST honour EXCLUDE_FROM_NOTEBOOKS. The first version of this
-            # flag did not, and reported 95 "routed" pages against 48 present —
-            # so the preflight announced "47 missing" when the true figure was
-            # ONE. Those 47 were the deliberate exclusions (source-summary
-            # pages that duplicate material already covered), which is why the
-            # two numbers matched exactly. Counting a deliberate design as a
-            # defect, in a metric built to stop exactly that. 2026-08-24.
-            if is_excluded(rel):
-                continue
-            dest = DEFAULT_ROUTE[2]
-            for r in (ROUTING_ORDER or NOTEBOOK_ROUTES):
-                if rel.startswith(r[0]):
-                    dest = r[2]              # None for a project this person doesn't carry
-                    break
-            # Same default-bucket-only exclusion route_files() applies, or the
-            # preflight's "eligible" count would exceed what the sync uploads.
-            if dest == DEFAULT_ROUTE[2] and any(
-                    rel.startswith(p) for p in EXCLUDE_FROM_DEFAULT_BUCKET):
-                continue
-            if dest == args.count_routed:
-                n += 1
-        print(n)
+        print(len(plan_routing().get(args.count_routed, [])))
         sys.exit(0)
 
     if not args.skip_auth_check:
@@ -1808,6 +1315,9 @@ def main():
         labels_to_run = [args.only]
         do_reminder = False
 
+    if any((VAULT / _NB_MANIFEST.get("log_exports", {}).get("path", "")).is_file() and p.parent == STATE_DIR / "notebooklm-exports" for label in labels_to_run for p in plan_routing().get(label, [])):
+        prepare_log_exports(args.dry_run, verify_only=args.verify_existing)
+
     if args.verify_existing:
         # Standalone verify pass: no uploads, just checks every tracked source
         # against its local file and writes verified_at timestamps on success.
@@ -1827,7 +1337,9 @@ def main():
                 # file, its changelog …) — see tools/notebooklm_external.py. Added 2026-09-25
                 # so no session uploads them by hand again.
                 if _EXTERNAL is not None:
-                    _EXTERNAL.sync_externals(sys.modules[__name__], label, args.dry_run, force=args.force)
+                    result = _EXTERNAL.sync_externals(sys.modules[__name__], label, args.dry_run, force=args.force)
+                    if result.get("failed"):
+                        raise SyncVerificationError(f"External route {label} failed: {result['failed']}")
 
     if do_reminder:
         if args.seed:
@@ -1838,8 +1350,10 @@ def main():
             # file, as hub-CLAUDE.md (2026-10-03; it had been kept by hand and fell 11 days
             # behind). Same mechanism as the routes above.
             if _EXTERNAL is not None:
-                _EXTERNAL.sync_externals(sys.modules[__name__], _EXTERNAL.REMINDER_LABEL,
-                                         args.dry_run, force=args.force)
+                result = _EXTERNAL.sync_externals(sys.modules[__name__], _EXTERNAL.REMINDER_LABEL,
+                                                 args.dry_run, force=args.force)
+                if result.get("failed"):
+                    raise SyncVerificationError(f"External reminder route failed: {result['failed']}")
 
 
 def run_verify_existing(labels_to_run: list, do_reminder: bool, dry_run: bool) -> None:
@@ -1876,6 +1390,8 @@ def run_verify_existing(labels_to_run: list, do_reminder: bool, dry_run: bool) -
             save_state(state_path, new_state)
         print(f"[{display}] VERIFY DONE  checked: {checked}  verified: {verified}  "
               f"stale: {stale}  missing_on_disk: {missing_disk}")
+        if stale:
+            raise SyncVerificationError(f"{display}: {stale} existing sources failed content verification")
 
     for label in labels_to_run:
         nbid, _, display = route_for_label(label)
@@ -1886,4 +1402,10 @@ def run_verify_existing(labels_to_run: list, do_reminder: bool, dry_run: bool) -
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        with _SAFETY.sync_lock(STATE_DIR):
+            main()
+            _SAFETY.finish_receipts(STATE_DIR)
+    except (SyncVerificationError, RuntimeError, _LOG_EXPORTS.LogExportError) as exc:
+        print(f"SYNC FAILED: {exc}", file=sys.stderr)
+        sys.exit(1)

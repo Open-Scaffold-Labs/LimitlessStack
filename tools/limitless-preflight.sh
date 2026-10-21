@@ -1930,6 +1930,26 @@ except Exception:
     print(-1)
 " "$LIMITLESS_NB_STATE_DIR/.notebooklm-$nb_label-state.json" < "$SWEEP_DIR/$nb_label.json" 2>/dev/null || echo -1)
       fi
+      # A source can be present and unique while processing has failed. Reuse
+      # the fetched listing; do not let the dedupe green line hide ERROR rows.
+      if [ "$FETCH_EXIT" = "0" ]; then
+        SOURCE_PROCESS_ERRORS=$(python3.11 -c '
+import json, sys
+obj = json.load(sys.stdin)
+rows = obj if isinstance(obj, list) else obj["sources"]
+assert isinstance(rows, list)
+for row in rows:
+    if str(row.get("status", "")).lower() == "error":
+        print(str(row.get("title") or "untitled") + " (" + str(row.get("id") or row.get("source_id") or "unknown") + ")")
+' < "$SWEEP_DIR/$nb_label.json" 2>/dev/null) || SOURCE_PROCESS_ERRORS="UNKNOWN"
+        if [ "$SOURCE_PROCESS_ERRORS" = "UNKNOWN" ]; then
+          warn "notebooklm $nb_id ($nb_label): source-processing status could not be read" \
+               "Inspect the exact notebook source listing; do not assume processing succeeded."
+        elif [ -n "$SOURCE_PROCESS_ERRORS" ]; then
+          warn "notebooklm $nb_id ($nb_label): source processing ERROR: $SOURCE_PROCESS_ERRORS" \
+               "Load notebooklm skill; inspect the exact source and backend error detail. Do not delete its predecessor or blindly re-upload."
+        fi
+      fi
       if [ "$DUPE_COUNT" = "-1" ] || [ -z "$DUPE_COUNT" ]; then
         # CLI unavailable / parse failed for this notebook — count toward
         # the skipped tally so the summary line reflects coverage gaps.

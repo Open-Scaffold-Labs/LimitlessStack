@@ -18,7 +18,11 @@ NotebookLM supports the analytical side of the self-healing ecosystem:
 
 ## What's in this folder
 
-- **`notebooklm-wiki-refresh.py`** — Automates the workflow of refreshing NotebookLM notebooks with updated wiki content.
+- **`../tools/notebooklm-wiki-refresh.py`** — Managed wiki/reminder/external refresh with READY/content verification, durable candidate journals, atomic receipts and a per-vault/member writer lock.
+- **`../tools/notebooklm_log_exports.py`** — Lossless complete-entry older/recent log exports; opt in with `NOTEBOOKLM["log_exports"] = {"path": "wiki/log.md", "max_words": 300000}` in the vault manifest. The original log stays intact; fixed archives and the recent tail are generated automatically.
+- **`../tools/notebooklm_sync_safety.py`** — Retains the prior source/receipt on rejected or uncertain uploads, resumes a known candidate without re-uploading, and retires only its exact predecessor after verification. A changed input during an unfinished operation stops with its recovery-record path.
+
+The generated upload directory and local operation journals are runtime files. Track `.notebooklm-log-exports.json` and verified `*-state.json` receipts. Run the two `test-notebooklm-*.py` export/lifecycle suites plus `test-notebooklm-external.py` and `test-member-notebooks.sh` before distributing tool changes.
 
 ## The notebooklm-py CLI
 

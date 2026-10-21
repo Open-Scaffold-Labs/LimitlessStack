@@ -121,6 +121,10 @@ cp "$SCRIPT_DIR/pinecone/pinecone-sync.py" "$TARGET/tools/pinecone-sync.py"
 cp "$SCRIPT_DIR/pinecone/pinecone-search.py" "$TARGET/tools/pinecone-search.py"
 # NotebookLM operational tools
 cp "$SCRIPT_DIR/tools/notebooklm-wiki-refresh.py" "$TARGET/tools/notebooklm-wiki-refresh.py"
+cp "$SCRIPT_DIR/tools/notebooklm_sync_safety.py" "$TARGET/tools/notebooklm_sync_safety.py"
+cp "$SCRIPT_DIR/tools/notebooklm_log_exports.py" "$TARGET/tools/notebooklm_log_exports.py"
+cp "$SCRIPT_DIR/tools/test-notebooklm-refresh-safety.py" "$TARGET/tools/test-notebooklm-refresh-safety.py"
+cp "$SCRIPT_DIR/tools/test-notebooklm-log-exports.py" "$TARGET/tools/test-notebooklm-log-exports.py"
 cp "$SCRIPT_DIR/tools/notebooklm-dedupe.py" "$TARGET/tools/notebooklm-dedupe.py"
 # Sources outside the vault + source accounting (2026-09-25); the refresh imports it,
 # the preflight calls its --check. Its fence runs offline.
