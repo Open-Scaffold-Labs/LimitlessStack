@@ -97,6 +97,14 @@ class Safety(unittest.TestCase):
   with safety.sync_lock(self.tools):
    with self.assertRaisesRegex(RuntimeError,'Another NotebookLM refresh'):
     with safety.sync_lock(self.tools):pass
+ def test_local_edit_during_upload_checkpoints_verified_snapshot(self):
+  state=self.tools/'.notebooklm-wiki-state.json';rf.save_state(state,{'wiki/log.md':{'source_id':'old','mtime':0}});original=self.path.read_bytes();add=self.backend.add
+  def edit_after_snapshot(path):
+   sid=add(path);self.path.write_text('A later local edit while the earlier snapshot uploads.');return sid
+  with patch.object(rf,'cmd_add',edit_after_snapshot):
+   with self.assertRaisesRegex(rf.SyncVerificationError,'verified snapshot receipt saved'):rf.sync_route('notebook-A','wiki','wiki',[self.path],False)
+  row=json.loads(state.read_text())['wiki/log.md'];self.assertEqual(row['source_id'],'new-1');self.assertTrue(row['verified_at']);self.assertEqual(row['mtime'],0);self.assertEqual(row['sha256'],hashlib.sha256(original).hexdigest());self.assertEqual(self.journals(),[])
+  rf.sync_route('notebook-A','wiki','wiki',[self.path],False);self.assertEqual(self.backend.adds,2);self.assertEqual(json.loads(state.read_text())['wiki/log.md']['source_id'],'new-2')
  def test_failed_route_preserves_receipt_and_predecessor(self):
   state=self.tools/'.notebooklm-wiki-state.json';old={'wiki/log.md':{'mtime':0,'source_id':'old','verified_at':1}};rf.save_state(state,old);self.backend.verify=False
   with self.assertRaises(rf.SyncVerificationError):rf.sync_route('notebook-A','wiki','wiki',[self.path],False)

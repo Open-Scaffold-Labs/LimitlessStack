@@ -904,11 +904,18 @@ def _sync_files(notebook_id, display, state_path, files, dry_run, force, prune):
         sid, verified, _gone = cmd_replace(path, entry.get("source_id") if entry else None)
         if not sid or not verified:
             raise SyncVerificationError(f"No verified replacement for {rel}; prior receipt retained")
-        if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
-            raise SyncVerificationError(f"{rel} changed during upload; candidate journal retained for reconciliation")
-        new_state[rel] = {"mtime": mtime, "sha256": digest, "source_id": sid, "verified_at": time.time()}
+        snapshot_digest = _SAFETY.candidate_snapshot_hash(STATE_DIR, sid)
+        changed_during_upload = (hashlib.sha256(path.read_bytes()).hexdigest() != snapshot_digest
+                                 or digest != snapshot_digest)
+        # The verified candidate is durable truth even if someone edited the
+        # local document meanwhile. Save ITS hash, never stamp newer local bytes
+        # as verified; mtime 0 guarantees a normal next sync picks up that edit.
+        new_state[rel] = {"mtime": 0 if changed_during_upload else mtime,
+                          "sha256": snapshot_digest, "source_id": sid, "verified_at": time.time()}
         save_state(state_path, new_state)
         counts[action] += 1
+        if changed_during_upload:
+            raise SyncVerificationError(f"{rel} changed during upload; verified snapshot receipt saved. Newer local edits need the next scoped sync; no uncertain re-upload.")
     # All current sources have passed verification or match an existing verified,
     # READY receipt. In particular ALL log parts precede retirement of log.md.
     if prune:

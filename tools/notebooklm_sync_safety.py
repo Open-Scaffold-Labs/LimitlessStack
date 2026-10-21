@@ -135,6 +135,16 @@ def replace(rf, path, old_source_id):
     return sid, True, bool(old and old != sid)
 
 
+
+def candidate_snapshot_hash(state_dir, source_id):
+    """Hash of the immutable snapshot actually verified by replace()."""
+    for path in (Path(state_dir) / ".notebooklm-pending").glob("*/operation.json"):
+        op = json.loads(path.read_text())
+        if op.get("source_id") == source_id and op.get("phase") == "completed":
+            return op["sha256"]
+    raise RuntimeError(f"No completed recovery receipt for verified candidate {source_id}")
+
+
 def finish_receipts(state_dir):
     """Remove completed journals only once their candidate is durably tracked."""
     state_dir = Path(state_dir)
