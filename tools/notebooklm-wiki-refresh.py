@@ -548,6 +548,7 @@ def _strip_for_compare(s: str) -> str:
       - wiki-link double brackets [[target]] → target
       - emphasis markers (*, _, **)
       - list bullets ("- ", "+ ") at the start of a line
+      - ordered-list numbers ("3. ", "12) ") at the start of a line
       - collapses whitespace
     Apply the same transformations before comparing so our verify check
     doesn't throw false negatives on markdown formatting differences.
@@ -569,9 +570,19 @@ def _strip_for_compare(s: str) -> str:
     measured on all 40 sources of the wiki route: 35 passed before, 40 after
     (none at 3/5 or below); each file's markers against the next file's text
     reached at most 1/5, before and after.
+
+    Ordered-list numbers added 2026-10-24 (Matt: "Fix the checker"): the index
+    drops "3. " / "4. " where a numbered item starts, as it drops "- ". The
+    log-recent.md export ended in a numbered list, so its required end-of-file
+    marker missed although every word was there, and the replace stopped half
+    done (candidate added, prior kept). Measured on that candidate's fulltext:
+    markers 5/5 and required 5/6 before, 5/5 and 6/6 after; against a different
+    file's text (log-older-001) 0/5 and 0/6, before and after. Applied to both
+    texts, as the bullets are; the threshold and the markers are unchanged.
     """
     # Strip common markdown punctuation that NotebookLM normalizes away
     s = re.sub(r"^[ \t]*[-+][ \t]+", "", s, flags=re.MULTILINE)  # list bullets (first: as measured)
+    s = re.sub(r"^[ \t]*\d+[.)][ \t]+", "", s, flags=re.MULTILINE)  # ordered-list numbers, like the bullets (2026-10-24)
     s = s.replace("`", " ")              # code spans: a backtick leaves a word break in the index
     s = re.sub(r"[*_]", "", s)           # bold, italic
     s = re.sub(r"\[\[([^\]]+)\]\]", r"\1", s)  # wiki-links
