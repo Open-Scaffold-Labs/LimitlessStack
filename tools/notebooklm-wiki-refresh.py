@@ -1419,7 +1419,67 @@ def run_verify_existing(labels_to_run: list, do_reminder: bool, dry_run: bool) -
         _verify_batch(REMINDER_STATE_FILE, REMINDER_NOTEBOOK_ID, "reminder")
 
 
+# ── Managed NotebookLM session (2026-10-30) ───────────────────────────────────
+# A refresh always runs inside a managed agent session (tools/notebooklm-agent.py), the way limitless-preflight.sh
+# does, so no caller has to remember the wrapper: end-of-session refreshes, the nightly self-heal corrector and manual
+# runs alike. The plain CLI home is signed out on purpose — one shared cookie session broke when two agents used it at
+# once (2026-10-30). Filesystem-only flags never touch NotebookLM, so they never take a session (the preflight calls
+# them on every Roll Call, from inside its own session).
+_FILESYSTEM_ONLY_FLAGS = ("--help", "-h", "--count-routed", "--newest-routed")
+
+
+def _filesystem_only(argv) -> bool:
+    return any(a in _FILESYSTEM_ONLY_FLAGS or a.startswith(("--count-routed=", "--newest-routed=")) for a in argv)
+
+
+def _agent_runner(environ=os.environ) -> Path:
+    return Path(environ.get("NOTEBOOKLM_AGENT_RUNNER") or Path(__file__).with_name("notebooklm-agent.py"))
+
+
+def managed_command(argv, environ=os.environ):
+    """The command that restarts this refresh inside a managed session, or None to run here: already inside one,
+    a filesystem-only flag, inline credentials (NOTEBOOKLM_AUTH_JSON, which the runner refuses), or no bootstrap
+    token yet (a fresh install before its one-time bootstrap)."""
+    if _filesystem_only(argv):
+        return None
+    if environ.get("NOTEBOOKLM_AGENT_ACTIVE") or environ.get("NOTEBOOKLM_AUTH_JSON"):
+        return None
+    home = Path(environ.get("NOTEBOOKLM_AGENT_HOME")
+                or Path(environ.get("HOME") or Path.home()) / ".notebooklm-agents")
+    if not (home / "profiles" / "bootstrap" / "master_token.json").exists():
+        return None
+    agent = environ.get("NOTEBOOKLM_REFRESH_AGENT_ID") or "wiki-refresh"
+    return [sys.executable, str(_agent_runner(environ)), "--home", str(home), "--agent", agent, "--",
+            sys.executable, str(Path(__file__).resolve()), *argv]
+
+
+def managed_context_problem(environ=os.environ):
+    """Inside a session, the runner itself checks it is genuine (not a copied marker) — as the preflight does."""
+    if not environ.get("NOTEBOOKLM_AGENT_ACTIVE"):
+        return None
+    # The runner hands its profile lock down as an open file; the check must inherit it (subprocess closes it by
+    # default — bash, which runs the preflight's check, keeps it open).
+    try:
+        lock_fd = int(environ.get("NOTEBOOKLM_AGENT_LOCK_FD", "-1"))
+    except ValueError:
+        lock_fd = -1
+    try:
+        keep = (lock_fd,) if lock_fd >= 3 and os.fstat(lock_fd) else ()
+    except OSError:
+        keep = ()  # not open here: the runner's check then refuses, as it must
+    check = subprocess.run([sys.executable, str(_agent_runner(environ)), "--check-managed-env"],
+                           env=dict(environ), pass_fds=keep)
+    return None if check.returncode == 0 else "invalid managed NotebookLM context; run through notebooklm-agent.py"
+
+
 if __name__ == "__main__":
+    _restart = managed_command(sys.argv[1:])
+    if _restart:
+        os.execv(_restart[0], _restart)
+    _problem = None if _filesystem_only(sys.argv[1:]) else managed_context_problem()
+    if _problem:
+        print(f"SYNC FAILED: {_problem}", file=sys.stderr)
+        sys.exit(2)
     try:
         inspection = any(flag in sys.argv for flag in (
             "--help", "--dry-run", "--count-routed", "--newest-routed", "--check-coverage",

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# nlm — the NotebookLM CLI through a managed agent session (2026-10-30). Use it wherever you would type `notebooklm`:
+#
+#   nlm ask -n 9c8f --new --yes "What are the key rules, recent changes, and mistakes to avoid for this project?"
+#   nlm source list -n <notebook-id> --json
+#
+# WHY. The plain CLI home (~/.notebooklm) is signed out on purpose: one shared cookie session broke when two agents
+# used it at once (2026-10-30). tools/notebooklm-agent.py gives each agent its own profile in ~/.notebooklm-agents,
+# copied from one durable bootstrap token, and serializes sign-in repair. This script is that runner with the agent
+# id filled in, so nobody has to remember the long command.
+#
+# THE AGENT ID — one profile per task, so parallel sessions never share a session:
+#   NLM_AGENT if set · else the Claude Code session (CLAUDE_CODE_SESSION_ID) · else the Codex thread (CODEX_THREAD_ID)
+#   · else one shared profile for this user, whose lock makes calls take turns.
+# Inside a managed session already (NOTEBOOKLM_AGENT_ACTIVE), it is the plain CLI: the session is inherited.
+# Sign-in itself is never run here: bootstrap the `bootstrap` profile with the notebooklm skill's login flow.
+set -euo pipefail
+
+if [ -n "${NOTEBOOKLM_AGENT_ACTIVE:-}" ]; then
+  exec notebooklm "$@"
+fi
+
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+runner="${NLM_RUNNER:-$here/notebooklm-agent.py}"
+agent="${NLM_AGENT:-}"
+if [ -z "$agent" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then agent="claude-${CLAUDE_CODE_SESSION_ID:-}"; fi
+if [ -z "$agent" ] && [ -n "${CODEX_THREAD_ID:-}" ]; then agent="codex-${CODEX_THREAD_ID:-}"; fi
+if [ -z "$agent" ]; then agent="shared-$(id -un)"; fi
+
+exec python3 "$runner" --home "${NOTEBOOKLM_AGENT_HOME:-$HOME/.notebooklm-agents}" --agent "$agent" -- notebooklm "$@"

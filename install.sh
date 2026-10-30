@@ -129,6 +129,17 @@ cp "$SCRIPT_DIR/tools/notebooklm_log_exports.py" "$TARGET/tools/notebooklm_log_e
 cp "$SCRIPT_DIR/tools/test-notebooklm-refresh-safety.py" "$TARGET/tools/test-notebooklm-refresh-safety.py"
 cp "$SCRIPT_DIR/tools/test-notebooklm-log-exports.py" "$TARGET/tools/test-notebooklm-log-exports.py"
 cp "$SCRIPT_DIR/tools/notebooklm-dedupe.py" "$TARGET/tools/notebooklm-dedupe.py"
+# nlm — the CLI through a managed agent session (2026-10-30). Linked onto PATH so every rules file can say `nlm ask …`.
+cp "$SCRIPT_DIR/tools/nlm" "$TARGET/tools/nlm"
+cp "$SCRIPT_DIR/tools/test-notebooklm-selfwrap.py" "$TARGET/tools/test-notebooklm-selfwrap.py"
+chmod +x "$TARGET/tools/nlm"
+for bin_dir in /opt/homebrew/bin /usr/local/bin; do
+  if [ -d "$bin_dir" ] && [ -w "$bin_dir" ]; then
+    ln -sf "$TARGET/tools/nlm" "$bin_dir/nlm" && echo "  ✓ nlm → $bin_dir/nlm"
+    break
+  fi
+done
+command -v nlm >/dev/null 2>&1 || echo "  ⚠ nlm is not on PATH — link $TARGET/tools/nlm into a PATH directory"
 # Sources outside the vault + source accounting (2026-09-25); the refresh imports it,
 # the preflight calls its --check. Its fence runs offline.
 cp "$SCRIPT_DIR/tools/notebooklm_external.py" "$TARGET/tools/notebooklm_external.py"

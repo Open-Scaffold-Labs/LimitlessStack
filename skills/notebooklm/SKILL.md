@@ -23,6 +23,13 @@ python3 ~/LimitlessStack/tools/notebooklm-agent.py --agent <unique-task-id> -- n
 python3 ~/LimitlessStack/tools/notebooklm-agent.py --agent <unique-task-id> -- python3 /absolute/path/to/refresh-script.py
 ```
 
+**Shorthand (2026-10-30): `nlm` is this runner with the ID filled in** — `nlm ask -n <notebook-id> --new --yes "q"`.
+It uses `NLM_AGENT`, else the Claude Code session ID, else the Codex thread ID, else one shared per-user role (its
+lock makes calls take turns). It is its own command, not a shim: plain `notebooklm` is untouched. Inside a managed job
+it is the plain CLI. `tools/notebooklm-wiki-refresh.py` restarts itself through the runner (role `wiki-refresh`, or
+`NOTEBOOKLM_REFRESH_AGENT_ID`) unless it is already inside one or given a filesystem-only flag, so the end-of-session
+refresh and the nightly self-heal need no wrapper. Tests: `tools/test-notebooklm-selfwrap.py`.
+
 Reuse the same ID for this task; give each independent agent its own ID. Wrap an entire foreground
 batch so its profile lock covers all subprocess calls. Do not detach a job from the wrapper.
 All CLI examples below run **inside this wrapper** on this Mac, except explicitly authorized
