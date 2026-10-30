@@ -1,7 +1,7 @@
 ---
 name: limitless-stack
 description: "The operating protocol for the Limitless Stack — seven integrated tools (Claude, CLAUDE.md, Obsidian, NotebookLM, Pinecone, Hub Workspace, Paperclip) that form one AI-powered system for running Open Scaffold Labs. The Stack exists to make a 100-vertical SaaS platform operationally viable with a small team: every app shares one architecture, one self-healing pipeline, and one knowledge base that compounds across all of them. Install this skill to teach any agent the full protocol."
-version: 0.2.1
+version: 0.2.2
 author: Open Scaffold Labs
 license: MIT
 ---

@@ -16,6 +16,8 @@
 
 set -u
 
+PREFLIGHT_ORIGINAL_ARGS=("$@")
+PREFLIGHT_SCRIPT="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 VAULT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$VAULT" || { echo "ERROR: cannot cd to vault $VAULT"; exit 2; }
 
@@ -518,6 +520,33 @@ banner() {
   echo "  $(date '+%Y-%m-%d %H:%M:%S %Z')"
   echo "═══════════════════════════════════════════════════════"
 }
+
+# ── Managed NotebookLM routing ──────────────────────────
+# A bootstrap enables isolation, not an auth bypass. The runner checks live
+# auth before re-entry and holds this role's lock for the full preflight.
+# Re-entry verifies ownership AND the inherited locked inode, not a marker alone.
+NBLM_MANAGED_CONTEXT=false
+NBLM_AGENT_RUNNER="$VAULT/tools/notebooklm-agent.py"
+NBLM_AGENT_HOME="${NOTEBOOKLM_AGENT_HOME:-$HOME/.notebooklm-agents}"
+if [ -n "${NOTEBOOKLM_AGENT_ACTIVE:-}" ]; then
+  if python3 "$NBLM_AGENT_RUNNER" --check-managed-env; then
+    NBLM_MANAGED_CONTEXT=true
+  else
+    echo "  ⨯ VERDICT: BLOCK — invalid managed NotebookLM context; restart through notebooklm-agent.py" >&2
+    PREFLIGHT_COMPLETED=true
+    exit 2
+  fi
+elif [ -e "$NBLM_AGENT_HOME/profiles/bootstrap/master_token.json" ] || [ -L "$NBLM_AGENT_HOME/profiles/bootstrap/master_token.json" ]; then
+  # Preserve the existing offline verdict before attempting session creation.
+  if ! network_probe; then network_abort "at start"; fi
+  python3 "$NBLM_AGENT_RUNNER" --home "$NBLM_AGENT_HOME" \
+    --agent "${NOTEBOOKLM_PREFLIGHT_AGENT_ID:-system-roll-call}" \
+    -- bash "$PREFLIGHT_SCRIPT" ${PREFLIGHT_ORIGINAL_ARGS[@]+"${PREFLIGHT_ORIGINAL_ARGS[@]}"}
+  NBLM_RUNNER_RC=$?
+  PREFLIGHT_COMPLETED=true
+  exit "$NBLM_RUNNER_RC"
+fi
+# ── End managed NotebookLM routing ──────────────────────
 
 banner
 echo ""
@@ -1546,13 +1575,16 @@ else
     fi
   fi
 
-  AUTH_OUT=$(notebooklm auth check --test 2>&1)
+  AUTH_CHECK_ARGS=(auth check --test)
+  # Managed refreshes belong to the runner's shared mint lock.
+  if [ "$NBLM_MANAGED_CONTEXT" = true ]; then AUTH_CHECK_ARGS+=(--passive); fi
+  AUTH_OUT=$(notebooklm "${AUTH_CHECK_ARGS[@]}" 2>&1)  # unbound-ok: initialized above with three mandatory auth arguments
   # Transient token-fetch failures happen (observed 2026-06-10: BLOCK at 04:40,
   # auth valid on the next check) — retry once before declaring a blocker.
   # See anti-pattern #24.
   if echo "$AUTH_OUT" | grep -q "fail"; then
     sleep 5
-    AUTH_OUT=$(notebooklm auth check --test 2>&1)
+    AUTH_OUT=$(notebooklm "${AUTH_CHECK_ARGS[@]}" 2>&1)  # unbound-ok: initialized above with three mandatory auth arguments
   fi
   if echo "$AUTH_OUT" | grep -q "Authentication Check" && ! echo "$AUTH_OUT" | grep -q "fail"; then
     ok "auth OK (storage_state.json valid, token fetch works)"

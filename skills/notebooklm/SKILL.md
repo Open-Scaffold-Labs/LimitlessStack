@@ -2,13 +2,60 @@
 name: notebooklm
 description: Install, authenticate, troubleshoot, and operate Gemini Notebook through the notebooklm-py CLI or typed async Python API. Use for notebook and source management, grounded chat and research, and artifact generation or download when the user mentions Gemini Notebook, notebooklm-py, the notebooklm CLI, or its Python API. Do not use for the generic Gemini API or unrelated content creation.
 ---
-<!-- notebooklm-py v0.8.2 -->
+
+<!-- notebooklm-py v0.8.6; OSL managed-agent integration 2026-10-30 -->
 # Gemini Notebook Automation
 
 Use the `notebooklm` CLI for agent workflows. Prefer `--json` and explicit IDs so every
 operation is inspectable and safe under concurrency. Use the typed async Python API only when the
 user requests application code or the CLI cannot express the workflow. The readiness, identity,
 authorization, and credential-handling rules below apply to both interfaces.
+
+## OSL Mac agents — required managed sessions (2026-10-30)
+
+Read this local skill before **every NotebookLM workflow**, including closeout. On Matt's Mac,
+run shell commands through Desktop Commander `start_process` with `shell="zsh"`. Use the
+canonical `~/LimitlessStack/tools/notebooklm-agent.py` (also deployed in the vault's `tools/`):
+
+```bash
+python3 ~/LimitlessStack/tools/notebooklm-agent.py --agent <unique-task-id> -- notebooklm list --json
+python3 ~/LimitlessStack/tools/notebooklm-agent.py --agent <unique-task-id> -- notebooklm ask -n <notebook-id> --new --yes "question" --json
+python3 ~/LimitlessStack/tools/notebooklm-agent.py --agent <unique-task-id> -- python3 /absolute/path/to/refresh-script.py
+```
+
+Reuse the same ID for this task; give each independent agent its own ID. Wrap an entire foreground
+batch so its profile lock covers all subprocess calls. Do not detach a job from the wrapper.
+All CLI examples below run **inside this wrapper** on this Mac, except explicitly authorized
+bootstrap/recovery. Always pin notebook IDs; never change shared `notebooklm use` context.
+
+The private home is `~/.notebooklm-agents`. Each agent gets a deterministic profile and its own
+independently minted Google web session. Only the bootstrap `master_token.json` is copied;
+**never copy `storage_state.json`, even into different directories**. Separate cookie files copied
+from one Google login still share the same underlying session and can invalidate each other.
+The runner serializes session mint/recovery, then allows healthy agents' work in parallel. It
+holds a per-agent lock through the complete child job, checks real token access, refuses profile
+or storage overrides, and removes legacy cookie-import hooks. This protects cooperating callers;
+it is not a security sandbox for arbitrary scripts.
+
+Keep the legacy `~/.notebooklm` profiles/default untouched. No global PATH shim. Roll Call uses
+its own managed role when bootstrap exists; its shared role is serialized. A failed managed
+check does not silently fall back to legacy credentials. Existing private profiles are retained.
+For an explicit recovery attempt, put `--refresh` before the runner’s `--`; direct child
+`notebooklm auth refresh` is rejected so it cannot bypass the mint lock.
+Google revocation, account challenges and service failures can still require human sign-in;
+independence is not a promise that credentials can never expire.
+
+Bootstrap once on the Mac with the supported `notebooklm login --master-token --account <email>`
+flow using `NOTEBOOKLM_HOME=~/.notebooklm-agents` and `NOTEBOOKLM_PROFILE=bootstrap`.
+Matt completes Google's browser sign-in. Keep directories `0700` and credential files `0600`.
+Never print, commit, upload or put the durable token in a command argument. Do not delete a
+working profile to repair another, replace the seed while agents are running, or import a
+browser's shared cookies. Coordinate any seed replacement and verify it before retiring old auth.
+
+Installed Mac CLI: `notebooklm-py[headless,browser]` 0.8.6 in the existing Python 3.11 environment.
+When updating the vendor skill, compare its packaged `SKILL.md` to this canonical file and retain
+this section; mirror the reviewed file to `~/.claude/skills/notebooklm/SKILL.md` (`~/.agents` links
+there). A blind `notebooklm skill install` would erase the local routing instructions.
 
 ## Setup and Authentication
 
@@ -132,8 +179,10 @@ Common operations:
 
 | Goal | Command |
 |---|---|
+| Check compute usage | `notebooklm usage --json`; `notebooklm usage --categories` for category availability and estimated costs |
 | List or create notebooks | `notebooklm list --json`; `notebooklm create "Title" --json` |
 | Add and wait for a source | `notebooklm source add <input> -n <nb> --json`; `notebooklm source wait <src> -n <nb>` |
+| URL recovery | `notebooklm source add <url> --fallback-fetch` |
 | Chat | `notebooklm ask "question" -n <nb> --json` |
 | Research | `notebooklm source add-research "query" -n <nb> --mode fast --json` (`deep` is also supported) |
 | List or wait for artifacts | `notebooklm artifact list -n <nb> --json`; `notebooklm artifact wait <id> -n <nb>` |
@@ -220,9 +269,7 @@ async def main(url: str) -> None:
             source_ids=[source.id],
             instructions="Focus on the key arguments",
         )
-        final = await client.artifacts.wait_for_completion(
-            notebook.id, task.task_id, timeout=1200
-        )
+        final = await client.artifacts.wait_for_completion(notebook.id, task.task_id, timeout=1200)
         if not final.is_complete:
             raise RuntimeError(f"Generation ended with {final.status}: {final.error}")
         await client.artifacts.download_audio(

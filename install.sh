@@ -120,6 +120,9 @@ mkdir -p "$TARGET/tools"
 cp "$SCRIPT_DIR/pinecone/pinecone-sync.py" "$TARGET/tools/pinecone-sync.py"
 cp "$SCRIPT_DIR/pinecone/pinecone-search.py" "$TARGET/tools/pinecone-search.py"
 # NotebookLM operational tools
+cp "$SCRIPT_DIR/tools/notebooklm-agent.py" "$TARGET/tools/notebooklm-agent.py"
+cp "$SCRIPT_DIR/tools/test-notebooklm-agent.py" "$TARGET/tools/test-notebooklm-agent.py"
+cp "$SCRIPT_DIR/tools/test-notebooklm-preflight.py" "$TARGET/tools/test-notebooklm-preflight.py"
 cp "$SCRIPT_DIR/tools/notebooklm-wiki-refresh.py" "$TARGET/tools/notebooklm-wiki-refresh.py"
 cp "$SCRIPT_DIR/tools/notebooklm_sync_safety.py" "$TARGET/tools/notebooklm_sync_safety.py"
 cp "$SCRIPT_DIR/tools/notebooklm_log_exports.py" "$TARGET/tools/notebooklm_log_exports.py"
@@ -191,6 +194,8 @@ cp "$SCRIPT_DIR/tools/test-dedupe-notebooks.sh"   "$TARGET/tools/test-dedupe-not
 cp "$SCRIPT_DIR/tools/com.openscaffold.nightly-selfheal.plist.template" \
    "$TARGET/tools/com.openscaffold.nightly-selfheal.plist.template"
 chmod +x "$TARGET/tools/session-bootstrap.sh" "$TARGET/tools/limitless-preflight.sh" \
+         "$TARGET/tools/notebooklm-agent.py" "$TARGET/tools/test-notebooklm-agent.py" \
+         "$TARGET/tools/test-notebooklm-preflight.py" \
          "$TARGET/tools/notebooklm-wiki-refresh.py" "$TARGET/tools/notebooklm-dedupe.py" \
          "$TARGET/tools/nightly-selfheal.sh" "$TARGET/tools/trust-anchor-check.py" \
          "$TARGET/tools/anti-pattern-candidates.py" "$TARGET/tools/task-file-check.py" \
