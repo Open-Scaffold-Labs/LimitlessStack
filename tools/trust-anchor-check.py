@@ -476,8 +476,14 @@ def check_canonical_facts():
 # own copy (a tool that replaced the link with a file) is a finding.
 # Project data lives in the vault's .limitless-project.py as
 #   SHARED_RULES_FILES = [{"canonical": "~/repo/CLAUDE.md", "repo": "~/repo",
-#                          "extra_checkouts": ["~/repo-clone"]}]
+#                          "extra_checkouts": ["~/repo-clone"],
+#                          "link_names": ["CLAUDE.md", "AGENTS.md"]}]
 # Absent or empty -> SKIP, so any other project installing this tool is unaffected.
+# link_names (added 2026-10-30): every name an agent loads the rules under. Codex reads
+# AGENTS.md; OpenFirehouse's was a hand copy that fell ~50 rulings behind and altered 7 of
+# Matt's quotes before Matt ruled "Link it to CLAUDE.md". Each name must be a link to the
+# canonical file in every checkout, the canonical's own checkout included (its other names).
+# Default: the canonical's own file name only, as before.
 def _manifest_value(name):
     path = os.path.join(VAULT, ".limitless-project.py")
     if not os.path.isfile(path):
@@ -591,19 +597,24 @@ def check_shared_rules():
         trees += [os.path.expanduser(p) for p in e.get("extra_checkouts", [])]
         home = os.path.realpath(os.path.dirname(canon))
         real_canon = os.path.realpath(canon)
+        names = e.get("link_names") or [os.path.basename(canon)]
         for t in trees:
-            if not os.path.isdir(t) or os.path.realpath(t) == home:
+            if not os.path.isdir(t):
                 continue
-            f = os.path.join(t, "CLAUDE.md")
-            if not os.path.lexists(f):
-                add(f"{t} has no CLAUDE.md — a session opened there gets none of the rules",
-                    f"ln -s {canon} {f}")
-            elif not os.path.islink(f):
-                add(f"{f} is its own copy, not a link to {canon} — copies drift apart",
-                    f"fold any lines only it has into {canon}, then: ln -sf {canon} {f}")
-            elif os.path.realpath(f) != real_canon:
-                add(f"{f} links to {os.path.realpath(f)}, not to {canon}",
-                    f"ln -sf {canon} {f}")
+            at_home = os.path.realpath(t) == home
+            for name in names:
+                if at_home and name == os.path.basename(canon):
+                    continue  # the canonical file itself
+                f = os.path.join(t, name)
+                if not os.path.lexists(f):
+                    add(f"{t} has no {name} — a session that reads {name} there gets none of the rules",
+                        f"ln -s {canon} {f}")
+                elif not os.path.islink(f):
+                    add(f"{f} is its own copy, not a link to {canon} — copies drift apart",
+                        f"fold any lines only it has into {canon}, then: ln -sf {canon} {f}")
+                elif os.path.realpath(f) != real_canon:
+                    add(f"{f} links to {os.path.realpath(f)}, not to {canon}",
+                        f"ln -sf {canon} {f}")
 
 
 def main():
