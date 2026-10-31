@@ -37,12 +37,15 @@ records in a shared vault: `members/<login>/notebooklm-state/`).
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
 import time
 from collections import defaultdict
 from pathlib import Path
+
+import notebooklm_sync_safety as _SAFETY
 
 TOOLS = Path(__file__).resolve().parent
 
@@ -275,7 +278,7 @@ def remap_state(state_path: Path, id_remap: dict[str, str], dry_run: bool) -> in
                 state[rel].pop("verified_at", None)
             rewrites += 1
     if not dry_run and rewrites > 0:
-        state_path.write_text(json.dumps(state, indent=2) + "\n")
+        _SAFETY.save_json(state_path, state)  # atomic, like the refresh's own state writes
         print(f"  wrote {state_path.name} ({rewrites} entries remapped)")
     return rewrites
 
@@ -286,7 +289,23 @@ def main():
     ap.add_argument("--apply", action="store_true", help="Actually delete; without this, only prints the plan")
     ap.add_argument("--state", help="Route state label (e.g., 'wiki') to remap source_ids in tools/.notebooklm-<label>-state.json")
     args = ap.parse_args()
+    if not args.apply:
+        return run(args)
+    # --apply deletes sources and rewrites the route state file, so it takes the refresh's own writer lock
+    # (.notebooklm-sync.lock in the state dir) for the whole run — plan included, so the plan is never computed
+    # against a notebook a refresh is mid-way through changing. This holds whatever NotebookLM profile either
+    # script runs in. A dry-run only reads, and takes no lock.
+    try:
+        with _SAFETY.sync_lock(_state_dir()):
+            return run(args)
+    except RuntimeError as e:
+        if "Another NotebookLM refresh is running" not in str(e):
+            raise
+        print(f"DEDUPE REFUSED: {e}", file=sys.stderr)
+        sys.exit(2)
 
+
+def run(args):
     global NOTEBOOK
     if args.notebook:
         # Pin every subsequent CLI call to this id via --notebook. We do NOT
@@ -389,5 +408,61 @@ def main():
         print("Dry-run only — no deletions performed. Pass --apply to execute.")
 
 
+# ── Managed NotebookLM session (2026-10-30) ───────────────────────────────────
+# The same self-wrap as notebooklm-wiki-refresh.py: the plain CLI home is signed out on purpose, so a dedupe restarts
+# itself inside a managed agent session (tools/notebooklm-agent.py) and no caller has to remember the wrapper. A
+# dry-run lists sources over the network, so it takes a session too; only --help never does.
+# It uses the REFRESH's profile (same agent id, same NOTEBOOKLM_REFRESH_AGENT_ID override), so when both wrap
+# themselves the runner's profile lock makes them take turns ("lock timeout reached; no child job ran"). That lock is
+# per profile, so it is not the guard: a run started inside another session keeps that session's profile. The guard
+# is the refresh's writer lock, which --apply takes in main() whatever the profile.
+_FILESYSTEM_ONLY_FLAGS = ("--help", "-h")
+
+
+def _agent_runner(environ=os.environ) -> Path:
+    return Path(environ.get("NOTEBOOKLM_AGENT_RUNNER") or Path(__file__).with_name("notebooklm-agent.py"))
+
+
+def managed_command(argv, environ=os.environ):
+    """The command that restarts this dedupe inside a managed session, or None to run here: already inside one,
+    --help, inline credentials (NOTEBOOKLM_AUTH_JSON, which the runner refuses), or no bootstrap token yet."""
+    if any(a in _FILESYSTEM_ONLY_FLAGS for a in argv):
+        return None
+    if environ.get("NOTEBOOKLM_AGENT_ACTIVE") or environ.get("NOTEBOOKLM_AUTH_JSON"):
+        return None
+    home = Path(environ.get("NOTEBOOKLM_AGENT_HOME")
+                or Path(environ.get("HOME") or Path.home()) / ".notebooklm-agents")
+    if not (home / "profiles" / "bootstrap" / "master_token.json").exists():
+        return None
+    agent = environ.get("NOTEBOOKLM_REFRESH_AGENT_ID") or "wiki-refresh"
+    return [sys.executable, str(_agent_runner(environ)), "--home", str(home), "--agent", agent, "--",
+            sys.executable, str(Path(__file__).resolve()), *argv]
+
+
+def managed_context_problem(environ=os.environ):
+    """Inside a session, the runner itself checks it is genuine (not a copied marker). The runner hands its profile
+    lock down as an open file and the check must inherit it — see the refresh's twin of this function."""
+    if not environ.get("NOTEBOOKLM_AGENT_ACTIVE"):
+        return None
+    try:
+        lock_fd = int(environ.get("NOTEBOOKLM_AGENT_LOCK_FD", "-1"))
+    except ValueError:
+        lock_fd = -1
+    try:
+        keep = (lock_fd,) if lock_fd >= 3 and os.fstat(lock_fd) else ()
+    except OSError:
+        keep = ()  # not open here: the runner's check then refuses, as it must
+    check = subprocess.run([sys.executable, str(_agent_runner(environ)), "--check-managed-env"],
+                           env=dict(environ), pass_fds=keep)
+    return None if check.returncode == 0 else "invalid managed NotebookLM context; run through notebooklm-agent.py"
+
+
 if __name__ == "__main__":
+    _restart = managed_command(sys.argv[1:])
+    if _restart:
+        os.execv(_restart[0], _restart)
+    _problem = None if any(a in _FILESYSTEM_ONLY_FLAGS for a in sys.argv[1:]) else managed_context_problem()
+    if _problem:
+        print(f"DEDUPE FAILED: {_problem}", file=sys.stderr)
+        sys.exit(2)
     main()
