@@ -151,6 +151,7 @@ cp "$SCRIPT_DIR/tools/limitless-preflight.sh" "$TARGET/tools/limitless-preflight
 # inspector (Loop 6), and the self-updating anti-patterns gatherer (rec #5).
 cp "$SCRIPT_DIR/tools/nightly-selfheal.sh"        "$TARGET/tools/nightly-selfheal.sh"
 cp "$SCRIPT_DIR/tools/trust-anchor-check.py"      "$TARGET/tools/trust-anchor-check.py"
+cp "$SCRIPT_DIR/tools/test-trust-anchor-shared-rules.py" "$TARGET/tools/test-trust-anchor-shared-rules.py"
 cp "$SCRIPT_DIR/tools/anti-pattern-candidates.py" "$TARGET/tools/anti-pattern-candidates.py"
 # Task-file rot detector. Added to install.sh 2026-09-12 — the tool shipped
 # 2026-08-24 and this script never deployed it, so limitless-preflight.sh
