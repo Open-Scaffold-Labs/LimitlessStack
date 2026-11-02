@@ -149,6 +149,12 @@ node_modules/
 
 # State files (keep them — they're project state, not local cache)
 # tools/.notebooklm-*-state.json should be tracked
+
+# install.sh output, rewritten on every run: the nightly-job plist rendered with this
+# machine's vault path, and reference copies of the self-heal templates. Tracking them
+# makes every teammate's clone show changes after install.sh.
+tools/com.openscaffold.nightly-selfheal.plist
+self-heal-templates/
 EOF
   echo "  ✓ .gitignore (or merge with existing if you have project-specific entries)"
 fi
